@@ -1,0 +1,13 @@
+// $Id$
+// vim:ft=javascript
+
+// If your extension references something external, use ARG_WITH
+// ARG_WITH("beanstalkd", "for beanstalkd support", "no");
+
+// Otherwise, use ARG_ENABLE
+// ARG_ENABLE("beanstalkd", "enable beanstalkd support", "no");
+
+if (PHP_BEANSTALKD != "no") {
+	EXTENSION("beanstalkd", "beanstalkd.c");
+}
+
