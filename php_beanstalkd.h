@@ -44,11 +44,12 @@ extern zend_module_entry beanstalkd_module_entry;
 PHP_MINIT_FUNCTION(beanstalkd);
 PHP_MSHUTDOWN_FUNCTION(beanstalkd);
 PHP_RINIT_FUNCTION(beanstalkd);
+PHP_RSHUTDOWN_FUNCTION(beanstalkd);
 PHP_MINFO_FUNCTION(beanstalkd);
 
 PHP_FUNCTION(beanstalkd_connect);
 PHP_FUNCTION(beanstalkd_pconnect);
-PHP_FUNCTION(beanstalkd_add_server);
+PHP_FUNCTION(beanstalkd_put);
 
 
 #define BSC_BUF_SIZE 4096

@@ -50,7 +50,7 @@
 
 
 /* True global resources - no need for thread safety here */
-static int le_beanstalkd_pool, le_beanstalkd;
+static int le_beanstalkd_pool, le_pbeanstalkd;
 static zend_class_entry *beanstalkd_class_entry_ptr;
 
 ZEND_DECLARE_MODULE_GLOBALS(beanstalkd)
@@ -65,24 +65,24 @@ zend_function_entry beanstalkd_functions[] = {
     PHP_FE(beanstalkd_connect, NULL)
     PHP_FE(beanstalkd_pconnect, NULL)
     PHP_FE(beanstalkd_put, NULL)
-    PHP_FE(beanstalkd_use, NULL)
-    PHP_FE(beanstalkd_reserve, NULL)
-    PHP_FE(beanstalkd_delete, NULL)
-    PHP_FE(beanstalkd_bury, NULL)
-    PHP_FE(beanstalkd_touch, NULL)
-    PHP_FE(beanstalkd_watch, NULL)
-    PHP_FE(beanstalkd_ignore, NULL)
-    PHP_FE(beanstalkd_peek, NULL)
-    PHP_FE(beanstalkd_kick, NULL)
-    PHP_FE(beanstalkd_kick_job, NULL)
-    PHP_FE(beanstalkd_stats_job, NULL)
-    PHP_FE(beanstalkd_stats_tube, NULL)
-    PHP_FE(beanstalkd_stats, NULL)
-    PHP_FE(beanstalkd_list_tubes, NULL)
-    PHP_FE(beanstalkd_list_tube_used, NULL)
-    PHP_FE(beanstalkd_list_tube_watched, NULL)
-    PHP_FE(beanstalkd_quit, NULL)
-    PHP_FE(beanstalkd_pause_tube, NULL)
+//    PHP_FE(beanstalkd_use, NULL)
+//    PHP_FE(beanstalkd_reserve, NULL)
+//    PHP_FE(beanstalkd_delete, NULL)
+//    PHP_FE(beanstalkd_bury, NULL)
+//    PHP_FE(beanstalkd_touch, NULL)
+//    PHP_FE(beanstalkd_watch, NULL)
+//    PHP_FE(beanstalkd_ignore, NULL)
+//    PHP_FE(beanstalkd_peek, NULL)
+//    PHP_FE(beanstalkd_kick, NULL)
+//    PHP_FE(beanstalkd_kick_job, NULL)
+//    PHP_FE(beanstalkd_stats_job, NULL)
+//    PHP_FE(beanstalkd_stats_tube, NULL)
+//    PHP_FE(beanstalkd_stats, NULL)
+//    PHP_FE(beanstalkd_list_tubes, NULL)
+//    PHP_FE(beanstalkd_list_tube_used, NULL)
+//    PHP_FE(beanstalkd_list_tube_watched, NULL)
+//    PHP_FE(beanstalkd_quit, NULL)
+//    PHP_FE(beanstalkd_pause_tube, NULL)
     PHP_FE_END    /* Must be the last line in beanstalkd_functions[] */
 };
 /* }}} */
@@ -91,24 +91,24 @@ static zend_function_entry php_beanstalkd_class_functions[] = {
     PHP_FALIAS(connect, beanstalkd_connect, NULL)
     PHP_FALIAS(pconnect, beanstalkd_pconnect, NULL)
     PHP_FALIAS(put, beanstalkd_put, NULL)
-    PHP_FALIAS(use, beanstalkd_use, NULL)
-    PHP_FALIAS(reserve, beanstalkd_reserve, NULL)
-    PHP_FALIAS(delete, beanstalkd_delete, NULL)
-    PHP_FALIAS(bury, beanstalkd_bury, NULL)
-    PHP_FALIAS(touch, beanstalkd_touch, NULL)
-    PHP_FALIAS(watch, beanstalkd_watch, NULL)
-    PHP_FALIAS(ignore, beanstalkd_ignore, NULL)
-    PHP_FALIAS(peek, beanstalkd_peek, NULL)
-    PHP_FALIAS(kick, beanstalkd_kick, NULL)
-    PHP_FALIAS(kick_job, beanstalkd_kick_job, NULL)
-    PHP_FALIAS(stats_job, beanstalkd_stats_job, NULL)
-    PHP_FALIAS(stats_tube, beanstalkd_stats_tube, NULL)
-    PHP_FALIAS(stats, beanstalkd_stats, NULL)
-    PHP_FALIAS(list_tubes, beanstalkd_list_tubes, NULL)
-    PHP_FALIAS(list_tube_used, beanstalkd_list_tube_used, NULL)
-    PHP_FALIAS(list_tube_watched, beanstalkd_list_tube_watched, NULL)
-    PHP_FALIAS(quit, beanstalkd_quit, NULL)
-    PHP_FALIAS(pause_tube, beanstalkd_pause_tube, NULL)
+//    PHP_FALIAS(use, beanstalkd_use, NULL)
+//    PHP_FALIAS(reserve, beanstalkd_reserve, NULL)
+//    PHP_FALIAS(delete, beanstalkd_delete, NULL)
+//    PHP_FALIAS(bury, beanstalkd_bury, NULL)
+//    PHP_FALIAS(touch, beanstalkd_touch, NULL)
+//    PHP_FALIAS(watch, beanstalkd_watch, NULL)
+//    PHP_FALIAS(ignore, beanstalkd_ignore, NULL)
+//    PHP_FALIAS(peek, beanstalkd_peek, NULL)
+//    PHP_FALIAS(kick, beanstalkd_kick, NULL)
+//    PHP_FALIAS(kick_job, beanstalkd_kick_job, NULL)
+//    PHP_FALIAS(stats_job, beanstalkd_stats_job, NULL)
+//    PHP_FALIAS(stats_tube, beanstalkd_stats_tube, NULL)
+//    PHP_FALIAS(stats, beanstalkd_stats, NULL)
+//    PHP_FALIAS(list_tubes, beanstalkd_list_tubes, NULL)
+//    PHP_FALIAS(list_tube_used, beanstalkd_list_tube_used, NULL)
+//    PHP_FALIAS(list_tube_watched, beanstalkd_list_tube_watched, NULL)
+//    PHP_FALIAS(quit, beanstalkd_quit, NULL)
+//    PHP_FALIAS(pause_tube, beanstalkd_pause_tube, NULL)
     PHP_FE_END
 };
 
@@ -272,7 +272,7 @@ extern bsc_hash_t bsc_consistent_hash;
 
 /* {{{ php_beanstalkd_init_globals
  */
-static void php_beanstalkd_init_globals(zend_beanstalkd_globals *beanstalkd_globals TSRMLS_DC) {
+static void php_beanstalkd_init_globals(zend_beanstalkd_globals *beanstalkd_globals_p TSRMLS_DC) {
     BEANSTALKD_G(debug_mode) = 0;
     BEANSTALKD_G(num_persistent) = 0;
     BEANSTALKD_G(compression_level) = Z_DEFAULT_COMPRESSION;
@@ -593,11 +593,9 @@ void bsc_pool_free(bsc_pool_t *pool TSRMLS_DC) /* {{{ */
             continue;
         }
         if (pool->servers[i]->persistent == 0 && pool->servers[i]->host != NULL) {
-            bsc_server_free(pool->servers[i]
-            TSRMLS_CC);
+            bsc_server_free(pool->servers[i] TSRMLS_CC);
         } else {
-            bsc_server_sleep(pool->servers[i]
-            TSRMLS_CC);
+            bsc_server_sleep(pool->servers[i] TSRMLS_CC);
         }
         pool->servers[i] = NULL;
     }
@@ -640,11 +638,9 @@ static int bsc_pool_close(bsc_pool_t *pool TSRMLS_DC) /* disconnects and removes
 
         for (i = 0; i < pool->num_servers; i++) {
             if (pool->servers[i]->persistent == 0 && pool->servers[i]->host != NULL) {
-                bsc_server_free(pool->servers[i]
-                TSRMLS_CC);
+                bsc_server_free(pool->servers[i] TSRMLS_CC);
             } else {
-                bsc_server_sleep(pool->servers[i]
-                TSRMLS_CC);
+                bsc_server_sleep(pool->servers[i] TSRMLS_CC);
             }
         }
 
@@ -920,31 +916,6 @@ static void bsc_server_disconnect(bsc_t *bsc TSRMLS_DC) /* {{{ */
 }
 
 
-bsc_t *bsc_server_new(char *host, int host_len, unsigned short port, int persistent, int timeout, int retry_interval
-                      TSRMLS_DC) {
-    bsc_t *bsc = pemalloc(sizeof(bsc_t), persistent);
-    memset(bsc, 0, sizeof(*bsc));
-
-    bsc->host = pemalloc(host_len + 1, persistent);
-    memcpy(bsc->host, host, host_len);
-    bsc->host[host_len] = '\0';
-
-    bsc->port = port;
-    bsc->status = BSC_STATUS_DISCONNECTED;
-
-    bsc->persistent = persistent;
-    if (persistent) {
-        BEANSTALKD_G(num_persistent)++;
-    }
-
-    bsc->timeout = timeout;
-    bsc->retry_interval = retry_interval;
-
-    return bsc;
-}
-
-/* }}} */
-
 static void bsc_server_callback_dtor(zval **callback TSRMLS_DC) /* {{{ */
 {
     zval **this_obj;
@@ -975,11 +946,46 @@ static void bsc_server_callback_ctor(zval **callback TSRMLS_DC) /* {{{ */
     zval_add_ref(callback);
 }
 
-static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC) /* 
-	prepare server struct for persistent sleep {{{ */
+
+static int bsc_server_store(bsc_t *bsc, const char *request, int request_len TSRMLS_DC) /* {{{ */
 {
-    bsc_server_callback_dtor(&bsc->failure_callback
-    TSRMLS_CC);
+    int response_len;
+    php_netstream_data_t *sock = (php_netstream_data_t*)bsc->stream->abstract;
+
+    if (bsc->timeoutms > 1) {
+        sock->timeout = _convert_timeoutms_to_ts(bsc->timeoutms);
+    }
+
+    if (php_stream_write(bsc->stream, request, request_len) != request_len) {
+        bsc_server_seterror(bsc, "Failed sending command and value to stream", 0);
+        return -1;
+    }
+
+    if ((response_len = bsc_readline(bsc TSRMLS_CC)) < 0) {
+        return -1;
+    }
+
+    if(bsc_str_left(bsc->inbuf, "STORED", response_len, sizeof("STORED") - 1)) {
+        return 1;
+    }
+
+    /* return FALSE */
+    if(bsc_str_left(bsc->inbuf, "NOT_STORED", response_len, sizeof("NOT_STORED") - 1)) {
+        return 0;
+    }
+
+    /* return FALSE without failover */
+    if (bsc_str_left(bsc->inbuf, "SERVER_ERROR out of memory", response_len, sizeof("SERVER_ERROR out of memory") - 1) ||
+        bsc_str_left(bsc->inbuf, "SERVER_ERROR object too large", response_len, sizeof("SERVER_ERROR object too large")-1)) {
+        return 0;
+    }
+
+    bsc_server_received_error(bsc, response_len);
+    return -1;
+}
+
+static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC)  {
+    bsc_server_callback_dtor(&bsc->failure_callback TSRMLS_CC);
     bsc->failure_callback = NULL;
 
     if (bsc->error != NULL) {
@@ -1001,8 +1007,7 @@ static void bsc_server_free(bsc_t *bsc TSRMLS_DC) /* {{{ */
     }
     bsc->in_free = 1;
 
-    bsc_server_sleep(bsc
-    TSRMLS_CC);
+    bsc_server_sleep(bsc TSRMLS_CC);
 
     if (bsc->persistent) {
         free(bsc->host);
@@ -1055,6 +1060,72 @@ static int bsc_str_left(char *haystack, char *needle, int haystack_len, int need
 }
 
 
+static int bsc_compress(char **result, unsigned long *result_len, const char *data, int data_len TSRMLS_DC) /* {{{ */
+{
+    int status, level = BEANSTALKD_G(compression_level);
+
+    *result_len = data_len + (data_len / 1000) + 25 + 1; /* some magic from zlib.c */
+    *result = (char *) emalloc(*result_len);
+
+    if (!*result) {
+        return 0;
+    }
+
+    if (level >= 0) {
+        status = compress2((unsigned char *) *result, result_len, (unsigned const char *) data, data_len, level);
+    } else {
+        status = compress((unsigned char *) *result, result_len, (unsigned const char *) data, data_len);
+    }
+
+    if (status == Z_OK) {
+        *result = erealloc(*result, *result_len + 1);
+        (*result)[*result_len] = '\0';
+        return 1;
+    }
+
+    switch (status) {
+        case Z_MEM_ERROR:
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Not enough memory to perform compression");
+            break;
+        case Z_BUF_ERROR:
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Not enough room in the output buffer to perform compression");
+            break;
+        case Z_STREAM_ERROR:
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Invalid compression level");
+            break;
+        default:
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknown error during compression");
+            break;
+    }
+
+    efree(*result);
+    return 0;
+}
+/* }}}*/
+
+static int bsc_uncompress(char **result, unsigned long *result_len, const char *data, int data_len) /* {{{ */
+{
+    int status;
+    unsigned int factor = 1, maxfactor = 16;
+    char *tmp1 = NULL;
+
+    do {
+        *result_len = (unsigned long)data_len * (1 << factor++);
+        *result = (char *) erealloc(tmp1, *result_len);
+        status = uncompress((unsigned char *) *result, result_len, (unsigned const char *) data, data_len);
+        tmp1 = *result;
+    } while (status == Z_BUF_ERROR && factor < maxfactor);
+
+    if (status == Z_OK) {
+        *result = erealloc(*result, *result_len + 1);
+        (*result)[*result_len] = '\0';
+        return 1;
+    }
+
+    efree(*result);
+    return 0;
+}
+
 static int bsc_sendcmd(bsc_t *bsc, const char *cmd, int cmdlen TSRMLS_DC) /* {{{ */
 {
     char *command;
@@ -1087,6 +1158,16 @@ static int bsc_sendcmd(bsc_t *bsc, const char *cmd, int cmdlen TSRMLS_DC) /* {{{
     return 1;
 }
 
+static struct timeval _convert_timeoutms_to_ts(long msecs) /* {{{ */
+{
+    struct timeval tv;
+    int secs = 0;
+
+    secs = msecs / 1000;
+    tv.tv_sec = secs;
+    tv.tv_usec = ((msecs - (secs * 1000)) * 1000) % 1000000;
+    return tv;
+}
 
 static int
 bsc_parse_response(bsc_t *bsc, char *response, int response_len, char **key, int *key_len, int *flags, int *value_len) {
@@ -1406,7 +1487,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
                 RETURN_FALSE;
             }
 
-            flags |= bsc_SERIALIZED;
+            flags |= BSC_SERIALIZED;
             zval_dtor(&value_copy);
 
             result = bsc_pool_store(
@@ -1416,7 +1497,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
         }
     }
 
-    if (flags & bsc_SERIALIZED) {
+    if (flags & BSC_SERIALIZED) {
         smart_str_free(&buf);
     }
 
@@ -1477,7 +1558,7 @@ static void php_bsc_incr_decr(INTERNAL_FUNCTION_PARAMETERS, int cmd) /* {{{ */
 
     if (bsc_object == NULL) {
         if (zend_parse_parameters(ZEND_NUM_ARGS()
-            TSRMLS_CC, "Os|l", &bsc_object, memcache_class_entry_ptr, &key, &key_len, &value) == FAILURE) {
+            TSRMLS_CC, "Os|l", &bsc_object, beanstalkd_class_entry_ptr, &key, &key_len, &value) == FAILURE) {
             return;
         }
     } else {
