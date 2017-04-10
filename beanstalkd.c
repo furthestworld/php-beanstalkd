@@ -362,7 +362,7 @@ PHP_FUNCTION(beanstalkd_connect) {
 }
 
 PHP_FUNCTION(beanstalkd_pconnect) {
-    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1);
 }
 
 PHP_FUNCTION(beanstalkd_put) {
