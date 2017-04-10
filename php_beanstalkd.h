@@ -177,14 +177,14 @@ int bsc_delete(bsc_t *, const char *, int, int TSRMLS_DC);
 
 void bsc_debug(const char *format, ...);
 
-#define bsc_DEBUG(info) \
+#define BSC_DEBUG(info) \
 {\
 	bsc_debug info; \
 }\
 
 #else
 
-#define bsc_DEBUG(info) \
+#define BSC_DEBUG(info) \
 {\
 }\
 
