@@ -261,7 +261,6 @@ static void php_bsc_incr_decr(INTERNAL_FUNCTION_PARAMETERS, int);
 
 static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int);
 
-static void php_bsc_pconnect(INTERNAL_FUNCTION_PARAMETERS, int);
 /* }}} */
 
 /* {{{ hash strategies */
@@ -363,7 +362,7 @@ PHP_FUNCTION(beanstalkd_connect) {
 }
 
 PHP_FUNCTION(beanstalkd_pconnect) {
-    php_bsc_pconnect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
 }
 
 PHP_FUNCTION(beanstalkd_put) {
@@ -390,6 +389,81 @@ RETURN_TRUE;
     RETURN_FALSE;
 #endif
 
+}
+
+static struct timeval _convert_timeoutms_to_ts(long msecs) /* {{{ */
+{
+    struct timeval tv;
+    int secs = 0;
+
+    secs = msecs / 1000;
+    tv.tv_sec = secs;
+    tv.tv_usec = ((msecs - (secs * 1000)) * 1000) % 1000000;
+    return tv;
+}
+
+static void bsc_server_callback_dtor(zval **callback TSRMLS_DC) /* {{{ */
+{
+    zval **this_obj;
+
+    if (!callback || !*callback) return;
+
+    if (Z_TYPE_PP(callback) == IS_ARRAY &&
+        zend_hash_index_find(Z_ARRVAL_PP(callback), 0, (void **) &this_obj) == SUCCESS &&
+        Z_TYPE_PP(this_obj) == IS_OBJECT) {
+        zval_ptr_dtor(this_obj);
+    }
+    zval_ptr_dtor(callback);
+}
+
+static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC)  {
+    bsc_server_callback_dtor(&bsc->failure_callback TSRMLS_CC);
+    bsc->failure_callback = NULL;
+
+    if (bsc->error != NULL) {
+        pefree(bsc->error, bsc->persistent);
+        bsc->error = NULL;
+    }
+}
+/* }}} */
+
+static void bsc_server_callback_ctor(zval **callback TSRMLS_DC) /* {{{ */
+{
+    zval **this_obj;
+
+    if (!callback || !*callback) return;
+
+    if (Z_TYPE_PP(callback) == IS_ARRAY &&
+        zend_hash_index_find(Z_ARRVAL_PP(callback), 0, (void **) &this_obj) == SUCCESS &&
+        Z_TYPE_PP(this_obj) == IS_OBJECT) {
+        zval_add_ref(this_obj);
+    }
+    zval_add_ref(callback);
+}
+
+static void bsc_server_seterror(bsc_t *bsc, const char *error, int errnum) /* {{{ */
+{
+    if (error != NULL) {
+        if (bsc->error != NULL) {
+            pefree(bsc->error, bsc->persistent);
+        }
+
+        bsc->error = pestrdup(error, bsc->persistent);
+        bsc->errnum = errnum;
+    }
+}
+
+
+static void bsc_server_received_error(bsc_t *bsc, int response_len)  /* {{{ */
+{
+    if (bsc_str_left(bsc->inbuf, "ERROR", response_len, sizeof("ERROR") - 1) ||
+        bsc_str_left(bsc->inbuf, "CLIENT_ERROR", response_len, sizeof("CLIENT_ERROR") - 1) ||
+        bsc_str_left(bsc->inbuf, "SERVER_ERROR", response_len, sizeof("SERVER_ERROR") - 1)) {
+        bsc->inbuf[response_len < BSC_BUF_SIZE - 1 ? response_len : BSC_BUF_SIZE - 1] = '\0';
+        bsc_server_seterror(bsc, bsc->inbuf, 0);
+    } else {
+        bsc_server_seterror(bsc, "Received malformed response", 0);
+    }
 }
 
 static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
@@ -916,34 +990,27 @@ static void bsc_server_disconnect(bsc_t *bsc TSRMLS_DC) /* {{{ */
 }
 
 
-static void bsc_server_callback_dtor(zval **callback TSRMLS_DC) /* {{{ */
+static int bsc_readline(bsc_t *bsc TSRMLS_DC) /* {{{ */
 {
-    zval **this_obj;
+    char *response;
+    size_t response_len;
 
-    if (!callback || !*callback) return;
-
-    if (Z_TYPE_PP(callback) == IS_ARRAY &&
-        zend_hash_index_find(Z_ARRVAL_PP(callback), 0, (void **) &this_obj) == SUCCESS &&
-        Z_TYPE_PP(this_obj) == IS_OBJECT) {
-        zval_ptr_dtor(this_obj);
+    if (bsc->stream == NULL) {
+        bsc_server_seterror(bsc, "Socket is closed", 0);
+        return -1;
     }
-    zval_ptr_dtor(callback);
-}
 
-/* }}} */
-
-static void bsc_server_callback_ctor(zval **callback TSRMLS_DC) /* {{{ */
-{
-    zval **this_obj;
-
-    if (!callback || !*callback) return;
-
-    if (Z_TYPE_PP(callback) == IS_ARRAY &&
-        zend_hash_index_find(Z_ARRVAL_PP(callback), 0, (void **) &this_obj) == SUCCESS &&
-        Z_TYPE_PP(this_obj) == IS_OBJECT) {
-        zval_add_ref(this_obj);
+    response = php_stream_get_line(bsc->stream, ZSTR(bsc->inbuf), BSC_BUF_SIZE, &response_len);
+    if (response) {
+        BSC_DEBUG(("bsc_readline: read data:"));
+        BSC_DEBUG(("bsc_readline:---"));
+        BSC_DEBUG(("%s", response));
+        BSC_DEBUG(("bsc_readline:---"));
+        return response_len;
     }
-    zval_add_ref(callback);
+
+    bsc_server_seterror(bsc, "Failed reading line from stream", 0);
+    return -1;
 }
 
 
@@ -984,16 +1051,6 @@ static int bsc_server_store(bsc_t *bsc, const char *request, int request_len TSR
     return -1;
 }
 
-static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC)  {
-    bsc_server_callback_dtor(&bsc->failure_callback TSRMLS_CC);
-    bsc->failure_callback = NULL;
-
-    if (bsc->error != NULL) {
-        pefree(bsc->error, bsc->persistent);
-        bsc->error = NULL;
-    }
-}
-/* }}} */
 
 /*
  *
@@ -1022,30 +1079,27 @@ static void bsc_server_free(bsc_t *bsc TSRMLS_DC) /* {{{ */
     }
 }
 
-static void bsc_server_seterror(bsc_t *bsc, const char *error, int errnum) /* {{{ */
+
+static char *bsc_get_version(bsc_t *bsc TSRMLS_DC) /* {{{ */
 {
-    if (error != NULL) {
-        if (bsc->error != NULL) {
-            pefree(bsc->error, bsc->persistent);
-        }
+    char *version_str;
+    int response_len;
 
-        bsc->error = pestrdup(error, bsc->persistent);
-        bsc->errnum = errnum;
+    if (bsc_sendcmd(bsc, "version", sizeof("version") - 1 TSRMLS_CC) < 0) {
+        return NULL;
     }
-}
 
-/* }}} */
-
-static void bsc_server_received_error(bsc_t *bsc, int response_len)  /* {{{ */
-{
-    if (bsc_str_left(bsc->inbuf, "ERROR", response_len, sizeof("ERROR") - 1) ||
-        bsc_str_left(bsc->inbuf, "CLIENT_ERROR", response_len, sizeof("CLIENT_ERROR") - 1) ||
-        bsc_str_left(bsc->inbuf, "SERVER_ERROR", response_len, sizeof("SERVER_ERROR") - 1)) {
-        bsc->inbuf[response_len < BSC_BUF_SIZE - 1 ? response_len : BSC_BUF_SIZE - 1] = '\0';
-        bsc_server_seterror(bsc, bsc->inbuf, 0);
-    } else {
-        bsc_server_seterror(bsc, "Received malformed response", 0);
+    if ((response_len = bsc_readline(bsc TSRMLS_CC)) < 0) {
+        return NULL;
     }
+
+    if (bsc_str_left(bsc->inbuf, "VERSION ", response_len, sizeof("VERSION ") - 1)) {
+        version_str = estrndup(bsc->inbuf + sizeof("VERSION ") - 1, response_len - (sizeof("VERSION ") - 1) - (sizeof("\r\n") - 1) );
+        return version_str;
+    }
+
+    bsc_server_seterror(bsc, "Malformed version string", 0);
+    return NULL;
 }
 
 static int bsc_str_left(char *haystack, char *needle, int haystack_len, int needle_len) /* {{{ */
@@ -1156,17 +1210,6 @@ static int bsc_sendcmd(bsc_t *bsc, const char *cmd, int cmdlen TSRMLS_DC) /* {{{
     efree(command);
 
     return 1;
-}
-
-static struct timeval _convert_timeoutms_to_ts(long msecs) /* {{{ */
-{
-    struct timeval tv;
-    int secs = 0;
-
-    secs = msecs / 1000;
-    tv.tv_sec = secs;
-    tv.tv_usec = ((msecs - (secs * 1000)) * 1000) % 1000000;
-    return tv;
 }
 
 static int
