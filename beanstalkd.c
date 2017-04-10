@@ -990,6 +990,54 @@ static void bsc_server_disconnect(bsc_t *bsc TSRMLS_DC) /* {{{ */
 }
 
 
+void bsc_server_deactivate(bsc_t *bsc TSRMLS_DC) /* 	disconnect and marks the server as down {{{ */
+{
+    bsc_server_disconnect(bsc TSRMLS_CC);
+    bsc->status = BSC_STATUS_FAILED;
+    bsc->failed = (long)time(NULL);
+
+    if (bsc->failure_callback != NULL) {
+        zval *retval = NULL;
+        zval *host, *tcp_port, *udp_port, *error, *errnum;
+        zval **params[5];
+
+        params[0] = &host;
+        params[1] = &tcp_port;
+        params[2] = &udp_port;
+        params[3] = &error;
+        params[4] = &errnum;
+
+        MAKE_STD_ZVAL(host);
+        MAKE_STD_ZVAL(tcp_port); MAKE_STD_ZVAL(udp_port);
+        MAKE_STD_ZVAL(error); MAKE_STD_ZVAL(errnum);
+
+        ZVAL_STRING(host, bsc->host, 1);
+        ZVAL_LONG(tcp_port, bsc->port); ZVAL_LONG(udp_port, 0);
+
+        if (bsc->error != NULL) {
+            ZVAL_STRING(error, bsc->error, 1);
+        }
+        else {
+            ZVAL_NULL(error);
+        }
+        ZVAL_LONG(errnum, bsc->errnum);
+
+        call_user_function_ex(EG(function_table), NULL, bsc->failure_callback, &retval, 5, params, 0, NULL TSRMLS_CC);
+
+        zval_ptr_dtor(&host);
+        zval_ptr_dtor(&tcp_port); zval_ptr_dtor(&udp_port);
+        zval_ptr_dtor(&error); zval_ptr_dtor(&errnum);
+
+        if (retval != NULL) {
+            zval_ptr_dtor(&retval);
+        }
+    }
+    else {
+        php_error_docref(NULL TSRMLS_CC, E_NOTICE, "Server %s (tcp %d) failed with: %s (%d)",
+                bsc->host, bsc->port, bsc->error, bsc->errnum);
+    }
+}
+
 static int bsc_readline(bsc_t *bsc TSRMLS_DC) /* {{{ */
 {
     char *response;

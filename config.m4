@@ -59,5 +59,5 @@ if test "$PHP_BEANSTALKD" != "no"; then
   dnl
   dnl PHP_SUBST(BEANSTALKD_SHARED_LIBADD)
 
-  PHP_NEW_EXTENSION(beanstalkd, beanstalkd.c, $ext_shared)
+  PHP_NEW_EXTENSION(beanstalkd, beanstalkd.c  beanstalkd_standard_hash.c beanstalkd_consistent_hash.c, $ext_shared)
 fi
