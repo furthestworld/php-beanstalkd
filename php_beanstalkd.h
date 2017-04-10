@@ -38,30 +38,167 @@ extern zend_module_entry beanstalkd_module_entry;
 #include "TSRM.h"
 #endif
 
-/* 
-  	Declare any global variables you may need between the BEGIN
-	and END macros here:     
+
+#include "ext/standard/php_smart_str_public.h"
+
+PHP_MINIT_FUNCTION(beanstalkd);
+PHP_MSHUTDOWN_FUNCTION(beanstalkd);
+PHP_RINIT_FUNCTION(beanstalkd);
+PHP_MINFO_FUNCTION(beanstalkd);
+
+PHP_FUNCTION(beanstalkd_connect);
+PHP_FUNCTION(beanstalkd_pconnect);
+PHP_FUNCTION(beanstalkd_add_server);
+
+
+#define BSC_BUF_SIZE 4096
+#define BSC_SERIALIZED 1
+#define BSC_COMPRESSED 2
+
+#define BSC_DEFAULT_TIMEOUT 1				/* seconds */
+#define BSC_KEY_MAX_SIZE 250				/* stoled from beanstalkdd sources =) */
+#define BSC_DEFAULT_RETRY 15 				/* retry failed server after x seconds */
+#define BSC_DEFAULT_SAVINGS 0.2				/* minimum 20% savings for compression to be used */
+#define BSC_DEFAULT_CACHEDUMP_LIMIT	100		/* number of entries */
+
+#define BSC_STATUS_FAILED 0
+#define BSC_STATUS_DISCONNECTED 1
+#define BSC_STATUS_UNKNOWN 2
+#define BSC_STATUS_CONNECTED 3
+
+#define BSC_OK 					0
+#define BSC_REQUEST_FAILURE 	-1
+
+#define BSC_STANDARD_HASH 1
+#define BSC_CONSISTENT_HASH 2
+#define BSC_HASH_CRC32 1					/* CRC32 hash function */
+#define BSC_HASH_FNV1A 2					/* FNV-1a hash function */
+
+#define BSC_CONSISTENT_POINTS 160			/* points per server */
+#define BSC_CONSISTENT_BUCKETS 1024			/* number of precomputed buckets, should be power of 2 */
+
+typedef struct bsc {
+    php_stream				*stream;                //数据流句柄（指针）
+    char					inbuf[BSC_BUF_SIZE];    //用来存放从流中读取的数据的字符空间
+    smart_str				outbuf;
+    char					*host;
+    unsigned short			port;
+    long					timeout;
+    long					timeoutms; /* takes precedence over timeout */
+    long					connect_timeoutms; /* takes precedence over timeout */
+    long					failed;
+    long					retry_interval;
+    int						persistent;
+    int						status;
+    char					*error;					/* last error message */
+    int						errnum;					/* last error code */
+    zval					*failure_callback;
+    zend_bool				in_free;
+} bsc_t;
+
+/* hashing strategy */
+typedef unsigned int (*bsc_hash_function)(const char *, int);
+typedef void * (*bsc_hash_create_state)(bsc_hash_function);
+typedef void (*bsc_hash_free_state)(void *);
+typedef bsc_t * (*bsc_hash_find_server)(void *, const char *, int TSRMLS_DC);
+typedef void (*bsc_hash_add_server)(void *, bsc_t *, unsigned int);
+
+#define bsc_pool_find(pool, key, key_len) \
+	pool->hash->find_server(pool->hash_state, key, key_len)
+
+typedef struct bsc_hash {
+    bsc_hash_create_state	create_state;
+    bsc_hash_free_state		free_state;
+    bsc_hash_find_server	find_server;
+    bsc_hash_add_server		add_server;
+} bsc_hash_t;
+
+/* 32 bit magic FNV-1a prime and init */
+#define FNV_32_PRIME 0x01000193
+#define FNV_32_INIT 0x811c9dc5
+
+typedef struct bsc_pool {
+    bsc_t					**servers;				//连接池中BEANSTALKD服务器体指针的指针
+    int						num_servers;			//连接池中BEANSTALKD服务器的数量
+    bsc_t					**requests;				//连接池中请求体的指针的指针
+    int						compress_threshold;		//是否开启大值压缩，存储时存储项的内容超过多大时对值进行压缩然后存储
+    double					min_compress_savings;	//压缩比例
+    zend_bool				in_free;				//是否正在被释放
+    bsc_hash_t				*hash;
+    void					*hash_state;
+} bsc_pool_t;
+
 
 ZEND_BEGIN_MODULE_GLOBALS(beanstalkd)
-	long  global_value;
-	char *global_string;
+	long debug_mode;
+	long default_port;
+	long num_persistent;
+	long compression_level;
+	long allow_failover;
+	long chunk_size;
+	long max_failover_attempts;
+	long hash_strategy;
+	long hash_function;
+	long default_timeout_ms;
 ZEND_END_MODULE_GLOBALS(beanstalkd)
-*/
 
-/* In every utility function you add that needs to use variables 
-   in php_beanstalkd_globals, call TSRMLS_FETCH(); after declaring other 
-   variables used by that function, or better yet, pass in TSRMLS_CC
-   after the last function argument and declare your utility function
-   with TSRMLS_DC after the last declared argument.  Always refer to
-   the globals in your function as BEANSTALKD_G(variable).  You are 
-   encouraged to rename these macros something shorter, see
-   examples in any other php module directory.
-*/
+#if (PHP_MAJOR_VERSION == 5) && (PHP_MINOR_VERSION >= 3)
+#   define BEANSTALKD_IS_CALLABLE(cb_zv, flags, cb_sp) zend_is_callable((cb_zv), (flags), (cb_sp) TSRMLS_CC)
+#else
+#   define BEANSTALKD_IS_CALLABLE(cb_zv, flags, cb_sp) zend_is_callable((cb_zv), (flags), (cb_sp))
+#endif
+
+#if (PHP_MAJOR_VERSION == 5) && (PHP_MINOR_VERSION >= 4)
+#    define BEANSTALKD_LIST_INSERT(item, list) zend_list_insert(item, list TSRMLS_CC);
+#else
+#    define BEANSTALKD_LIST_INSERT(item, list) zend_list_insert(item, list);
+#endif
+
+
+/* internal functions */
+bsc_t *bsc_server_new(char *, int, unsigned short, int, int, int TSRMLS_DC);
+bsc_t *bsc_find_persistent(char *, int, int, int, int TSRMLS_DC);
+int bsc_server_failure(bsc_t * TSRMLS_DC);
+void bsc_server_deactivate(bsc_t * TSRMLS_DC);
+
+int bsc_prepare_key(zval *, char *, unsigned int * TSRMLS_DC);
+int bsc_prepare_key_ex(const char *, unsigned int, char *, unsigned int * TSRMLS_DC);
+
+bsc_pool_t *bsc_pool_new(TSRMLS_D);
+void bsc_pool_free(bsc_pool_t * TSRMLS_DC);
+void bsc_pool_add(bsc_pool_t *, bsc_t *, unsigned int);
+int bsc_pool_store(bsc_pool_t *, const char *, int, const char *, int, int, int, const char *, int TSRMLS_DC);
+int bsc_open(bsc_t *, int, char **, int * TSRMLS_DC);
+int bsc_exec_retrieval_cmd(bsc_pool_t *, const char *, int, zval **, zval * TSRMLS_DC);
+int bsc_delete(bsc_t *, const char *, int, int TSRMLS_DC);
+
+/* {{{ macros */
+#if ZEND_DEBUG
+
+void bsc_debug(const char *format, ...);
+
+#define bsc_DEBUG(info) \
+{\
+	bsc_debug info; \
+}\
+
+#else
+
+#define bsc_DEBUG(info) \
+{\
+}\
+
+#endif
+/* }}} */
 
 #ifdef ZTS
 #define BEANSTALKD_G(v) TSRMG(beanstalkd_globals_id, zend_beanstalkd_globals *, v)
 #else
 #define BEANSTALKD_G(v) (beanstalkd_globals.v)
+#endif
+
+#ifndef ZSTR
+#define ZSTR
 #endif
 
 #endif	/* PHP_BEANSTALKD_H */
