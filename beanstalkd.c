@@ -226,7 +226,7 @@ PHP_MINIT_FUNCTION(beanstalkd)
     REGISTER_INI_ENTRIES();
 
     return SUCCESS;
-   
+
     }
 /* }}} */
 
@@ -375,11 +375,11 @@ bsc_t *bsc_server_new(char *host, int host_len, unsigned short port, int persist
     bsc->host[host_len] = '\0';
 
     bsc->port = port;
-    bsc->status = MMC_STATUS_DISCONNECTED;
+    bsc->status = BSC_STATUS_DISCONNECTED;
 
     bsc->persistent = persistent;
     if (persistent) {
-        MEMCACHE_G(num_persistent)++;
+        BEANSTALKD_G(num_persistent)++;
     }
 
     bsc->timeout = timeout;
@@ -454,7 +454,7 @@ static void bsc_server_free(bsc_t *bsc TSRMLS_DC) /* {{{ */
     if (bsc->persistent) {
         free(bsc->host);
         free(bsc);
-        MEMCACHE_G(num_persistent)--;
+        BEANSTALKD_G(num_persistent)--;
     } else {
         if (bsc->stream != NULL) {
             php_stream_close(bsc->stream);
@@ -485,7 +485,7 @@ static void bsc_server_received_error(bsc_t *bsc, int response_len)  /* {{{ */
     if (bsc_str_left(bsc->inbuf, "ERROR", response_len, sizeof("ERROR") - 1) ||
         bsc_str_left(bsc->inbuf, "CLIENT_ERROR", response_len, sizeof("CLIENT_ERROR") - 1) ||
         bsc_str_left(bsc->inbuf, "SERVER_ERROR", response_len, sizeof("SERVER_ERROR") - 1)) {
-        bsc->inbuf[response_len < MMC_BUF_SIZE - 1 ? response_len : MMC_BUF_SIZE - 1] = '\0';
+        bsc->inbuf[response_len < BSC_BUF_SIZE - 1 ? response_len : BSC_BUF_SIZE - 1] = '\0';
         bsc_server_seterror(bsc, bsc->inbuf, 0);
     } else {
         bsc_server_seterror(bsc, "Received malformed response", 0);
@@ -498,12 +498,12 @@ int
 bsc_server_failure(bsc_t *bsc TSRMLS_DC) /*determines if a request should be retried or is a hard network failure {{{ */
 {
     switch (bsc->status) {
-        case MMC_STATUS_DISCONNECTED:
+        case BSC_STATUS_DISCONNECTED:
             return 0;
 
             /* attempt reconnect of sockets in unknown state */
-        case MMC_STATUS_UNKNOWN:
-            bsc->status = MMC_STATUS_DISCONNECTED;
+        case BSC_STATUS_UNKNOWN:
+            bsc->status = BSC_STATUS_DISCONNECTED;
             return 0;
     }
 
@@ -568,17 +568,17 @@ bsc_prepare_key_ex(const char *key, unsigned int key_len, char *result, unsigned
     if (key_len == 0) {
         php_error_docref(NULL
         TSRMLS_CC, E_WARNING, "Key cannot be empty");
-        return MMC_REQUEST_FAILURE;
+        return BSC_REQUEST_FAILURE;
     }
 
-    *result_len = key_len < MMC_KEY_MAX_SIZE ? key_len : MMC_KEY_MAX_SIZE;
+    *result_len = key_len < BSC_KEY_MAX_SIZE ? key_len : BSC_KEY_MAX_SIZE;
     result[*result_len] = '\0';
 
     for (i = 0; i < *result_len; i++) {
         result[i] = ((unsigned char) key[i]) > ' ' ? key[i] : '_';
     }
 
-    return MMC_OK;
+    return BSC_OK;
 }
 
 /* }}} */
@@ -650,8 +650,8 @@ static void bsc_pool_init_hash(bsc_pool_t *pool TSRMLS_DC) /* {{{ */
      * 这里指定了“抽象类”的继承关系。以扩展默认的来说，
      * 这里继续把bsc_standard_hash类比做一个子类，它继承了这个抽象类，并且实现了4个抽象方法。
      */
-    switch (MEMCACHE_G(hash_strategy)) {
-        case MMC_CONSISTENT_HASH:
+    switch (BEANSTALKD_G(hash_strategy)) {
+        case BSC_CONSISTENT_HASH:
             pool->hash = &bsc_consistent_hash;
             break;
         default:
@@ -661,8 +661,8 @@ static void bsc_pool_init_hash(bsc_pool_t *pool TSRMLS_DC) /* {{{ */
     /*
      * 这里指定了具体的hash函数
      */
-    switch (MEMCACHE_G(hash_function)) {
-        case MMC_HASH_FNV1A:
+    switch (BEANSTALKD_G(hash_function)) {
+        case BSC_HASH_FNV1A:
             hash = &bsc_hash_fnv1a;
             break;
         default:
@@ -688,7 +688,7 @@ bsc_pool_t *bsc_pool_new(TSRMLS_D) /* {{{ */
     pool->num_servers = 0;
     pool->compress_threshold = 0;
     pool->in_free = 0;
-    pool->min_compress_savings = MMC_DEFAULT_SAVINGS;
+    pool->min_compress_savings = BSC_DEFAULT_SAVINGS;
 
     bsc_pool_init_hash(pool
     TSRMLS_CC);
@@ -807,17 +807,17 @@ int bsc_pool_store(bsc_pool_t *pool, const char *command, int command_len, const
     int request_len, result = -1;
     char *key_copy = NULL, *data = NULL;
 
-    if (key_len > MMC_KEY_MAX_SIZE) {
-        key = key_copy = estrndup(key, MMC_KEY_MAX_SIZE);
-        key_len = MMC_KEY_MAX_SIZE;
+    if (key_len > BSC_KEY_MAX_SIZE) {
+        key = key_copy = estrndup(key, BSC_KEY_MAX_SIZE);
+        key_len = BSC_KEY_MAX_SIZE;
     }
 
     /* autocompress large values */
     if (pool->compress_threshold && value_len >= pool->compress_threshold) {
-        flags |= MMC_COMPRESSED;
+        flags |= BSC_COMPRESSED;
     }
 
-    if (flags & MMC_COMPRESSED) {
+    if (flags & BSC_COMPRESSED) {
         unsigned long data_len;
 
         if (!bsc_compress(&data, &data_len, value, value_len TSRMLS_CC)) {
@@ -830,7 +830,7 @@ int bsc_pool_store(bsc_pool_t *pool, const char *command, int command_len, const
             value = data;
             value_len = data_len;
         } else {
-            flags &= ~MMC_COMPRESSED;
+            flags &= ~BSC_COMPRESSED;
             efree(data);
             data = NULL;
         }
@@ -887,7 +887,7 @@ int bsc_pool_store(bsc_pool_t *pool, const char *command, int command_len, const
 
 static int bsc_compress(char **result, unsigned long *result_len, const char *data, int data_len TSRMLS_DC) /* {{{ */
 {
-    int status, level = MEMCACHE_G(compression_level);
+    int status, level = BEANSTALKD_G(compression_level);
 
     *result_len = data_len + (data_len / 1000) + 25 + 1; /* some magic from zlib.c */
     *result = (char *) emalloc(*result_len);
@@ -1046,7 +1046,7 @@ static int _bsc_open(bsc_t *bsc, char **error_string, int *errnum TSRMLS_DC) /* 
     }
 
     if (!bsc->stream) {
-        MMC_DEBUG(("_bsc_open: can't open socket to host"));
+        BSC_DEBUG(("_bsc_open: can't open socket to host"));
         bsc_server_seterror(bsc, errstr != NULL ? errstr : "Connection failed", err);
         bsc_server_deactivate(bsc
         TSRMLS_CC);
@@ -1068,9 +1068,9 @@ static int _bsc_open(bsc_t *bsc, char **error_string, int *errnum TSRMLS_DC) /* 
     php_stream_auto_cleanup(bsc->stream);
     php_stream_set_option(bsc->stream, PHP_STREAM_OPTION_READ_TIMEOUT, 0, &tv);
     php_stream_set_option(bsc->stream, PHP_STREAM_OPTION_WRITE_BUFFER, PHP_STREAM_BUFFER_NONE, NULL);
-    php_stream_set_chunk_size(bsc->stream, MEMCACHE_G(chunk_size));
+    php_stream_set_chunk_size(bsc->stream, BEANSTALKD_G(chunk_size));
 
-    bsc->status = MMC_STATUS_CONNECTED;
+    bsc->status = BSC_STATUS_CONNECTED;
 
     if (bsc->error != NULL) {
         pefree(bsc->error, bsc->persistent);
@@ -1085,14 +1085,14 @@ static int _bsc_open(bsc_t *bsc, char **error_string, int *errnum TSRMLS_DC) /* 
 int bsc_open(bsc_t *bsc, int force_connect, char **error_string, int *errnum TSRMLS_DC) /* {{{ */
 {
     switch (bsc->status) {
-        case MMC_STATUS_DISCONNECTED:
+        case BSC_STATUS_DISCONNECTED:
             return _bsc_open(bsc, error_string, errnum
             TSRMLS_CC);
 
-        case MMC_STATUS_CONNECTED:
+        case BSC_STATUS_CONNECTED:
             return 1;
 
-        case MMC_STATUS_UNKNOWN:
+        case BSC_STATUS_UNKNOWN:
             /* check connection if needed */
             if (force_connect) {
                 char *version;
@@ -1103,11 +1103,11 @@ int bsc_open(bsc_t *bsc, int force_connect, char **error_string, int *errnum TSR
                 if (version) {
                     efree(version);
                 }
-                bsc->status = MMC_STATUS_CONNECTED;
+                bsc->status = BSC_STATUS_CONNECTED;
             }
             return 1;
 
-        case MMC_STATUS_FAILED:
+        case BSC_STATUS_FAILED:
             if (bsc->retry_interval >= 0 && (long) time(NULL) >= bsc->failed + bsc->retry_interval) {
                 if (_bsc_open(bsc, error_string, errnum TSRMLS_CC) /*&& bsc_flush(bsc, 0 TSRMLS_CC) > 0*/) {
                     return 1;
@@ -1130,7 +1130,7 @@ static void bsc_server_disconnect(bsc_t *bsc TSRMLS_DC) /* {{{ */
         }
         bsc->stream = NULL;
     }
-    bsc->status = MMC_STATUS_DISCONNECTED;
+    bsc->status = BSC_STATUS_DISCONNECTED;
 }
 
 /* }}} */
@@ -1139,7 +1139,7 @@ void bsc_server_deactivate(bsc_t *bsc TSRMLS_DC) /* 	disconnect and marks the se
 {
     bsc_server_disconnect(bsc
     TSRMLS_CC);
-    bsc->status = MMC_STATUS_FAILED;
+    bsc->status = BSC_STATUS_FAILED;
     bsc->failed = (long) time(NULL);
 
     if (bsc->failure_callback != NULL) {
@@ -1192,7 +1192,7 @@ void bsc_server_deactivate(bsc_t *bsc TSRMLS_DC) /* 	disconnect and marks the se
 
 /*
  * 这个函数的大招就是：
- * 从指定的beanstalkd连接的数据流中读取一行数据（最长读取内容为 MMC_BUF_SIZE 长度），
+ * 从指定的beanstalkd连接的数据流中读取一行数据（最长读取内容为 BSC_BUF_SIZE 长度），
  * 读取成功则返回读取的数据的长度，否则返回-1
  */
 static int bsc_readline(bsc_t *bsc TSRMLS_DC) /* {{{ */
@@ -1205,12 +1205,12 @@ static int bsc_readline(bsc_t *bsc TSRMLS_DC) /* {{{ */
         return -1;
     }
 
-    response = php_stream_get_line(bsc->stream, ZSTR(bsc->inbuf), MMC_BUF_SIZE, &response_len);
+    response = php_stream_get_line(bsc->stream, ZSTR(bsc->inbuf), BSC_BUF_SIZE, &response_len);
     if (response) {
-        MMC_DEBUG(("bsc_readline: read data:"));
-        MMC_DEBUG(("bsc_readline:---"));
-        MMC_DEBUG(("%s", response));
-        MMC_DEBUG(("bsc_readline:---"));
+        BSC_DEBUG(("bsc_readline: read data:"));
+        BSC_DEBUG(("bsc_readline:---"));
+        BSC_DEBUG(("%s", response));
+        BSC_DEBUG(("bsc_readline:---"));
         return response_len;
     }
 
@@ -1268,7 +1268,7 @@ static int bsc_sendcmd(bsc_t *bsc, const char *cmd, int cmdlen TSRMLS_DC) /* {{{
         return -1;
     }
 
-    MMC_DEBUG(("bsc_sendcmd: sending command '%s'", cmd));
+    BSC_DEBUG(("bsc_sendcmd: sending command '%s'", cmd));
 
     command = emalloc(cmdlen + sizeof("\r\n"));
     memcpy(command, cmd, cmdlen);
@@ -1303,7 +1303,7 @@ static int bsc_parse_response(bsc_t *bsc, char *response, int response_len, char
         return -1;
     }
 
-    MMC_DEBUG(("bsc_parse_response: got response '%s'", response));
+    BSC_DEBUG(("bsc_parse_response: got response '%s'", response));
 
     for (i = 0, n = 0; i < response_len && n < 3; i++) {
         if (response[i] == ' ') {
@@ -1311,7 +1311,7 @@ static int bsc_parse_response(bsc_t *bsc, char *response, int response_len, char
         }
     }
 
-    MMC_DEBUG(("bsc_parse_response: found %d spaces", n));
+    BSC_DEBUG(("bsc_parse_response: found %d spaces", n));
 
     if (n < 3) {
         bsc_server_seterror(bsc, "Malformed VALUE header", 0);
@@ -1336,10 +1336,10 @@ static int bsc_parse_response(bsc_t *bsc, char *response, int response_len, char
         return -1;
     }
 
-    MMC_DEBUG(("bsc_parse_response: 1st space is at %d position", spaces[1]));
-    MMC_DEBUG(("bsc_parse_response: 2nd space is at %d position", spaces[2]));
-    MMC_DEBUG(("bsc_parse_response: flags = %d", *flags));
-    MMC_DEBUG(("bsc_parse_response: value_len = %d ", *value_len));
+    BSC_DEBUG(("bsc_parse_response: 1st space is at %d position", spaces[1]));
+    BSC_DEBUG(("bsc_parse_response: 2nd space is at %d position", spaces[2]));
+    BSC_DEBUG(("bsc_parse_response: flags = %d", *flags));
+    BSC_DEBUG(("bsc_parse_response: value_len = %d ", *value_len));
 
     return 1;
 }
@@ -1401,13 +1401,13 @@ int bsc_exec_retrieval_cmd(bsc_pool_t *pool, const char *key, int key_len, zval 
     char *command, *value;
     int result = -1, command_len, response_len, value_len, flags = 0;
 
-    MMC_DEBUG(("bsc_exec_retrieval_cmd: key '%s'", key));
+    BSC_DEBUG(("bsc_exec_retrieval_cmd: key '%s'", key));
 
     command_len = spprintf(&command, 0, "get %s", key);
 
     while (result < 0 && (bsc = bsc_pool_find(pool, key, key_len
         TSRMLS_CC)) != NULL) {
-        MMC_DEBUG(("bsc_exec_retrieval_cmd: found server '%s:%d' for key '%s'", bsc->host, bsc->port, key));
+        BSC_DEBUG(("bsc_exec_retrieval_cmd: found server '%s:%d' for key '%s'", bsc->host, bsc->port, key));
 
         /* send command and read value */
         if ((result = bsc_sendcmd(bsc, command, command_len TSRMLS_CC)) > 0 &&
@@ -1426,7 +1426,7 @@ int bsc_exec_retrieval_cmd(bsc_pool_t *pool, const char *key, int key_len, zval 
                 bsc_server_seterror(bsc, "Malformed END line", 0);
                 result = -1;
             }
-            else if (flags & MMC_SERIALIZED) {
+            else if (flags & BSC_SERIALIZED) {
                 result = bsc_postprocess_value(return_value, value, value_len
                 TSRMLS_CC);
             } else {
@@ -1458,7 +1458,7 @@ bsc_exec_retrieval_cmd_multi(bsc_pool_t *pool, zval *keys, zval **return_value, 
     HashPosition pos;
     zval **zkey;
     char *result_key, *value;
-    char key[MMC_KEY_MAX_SIZE];
+    char key[BSC_KEY_MAX_SIZE];
     unsigned int key_len;
 
     int i = 0, j, num_requests, result, result_status, result_key_len, value_len, flags;
@@ -1478,7 +1478,7 @@ bsc_exec_retrieval_cmd_multi(bsc_pool_t *pool, zval *keys, zval **return_value, 
 
         /* first pass to build requests for each server */
         while (zend_hash_get_current_data_ex(Z_ARRVAL_P(keys), (void **) &zkey, &pos) == SUCCESS) {
-            if (bsc_prepare_key(*zkey, key, &key_len TSRMLS_CC) == MMC_OK) {
+            if (bsc_prepare_key(*zkey, key, &key_len TSRMLS_CC) == BSC_OK) {
                 /* schedule key if first round or if missing from result */
                 if ((!i || !zend_hash_exists(Z_ARRVAL_PP(return_value), key, key_len)) &&
                     (bsc = bsc_pool_find(pool, key, key_len
@@ -1490,7 +1490,7 @@ bsc_exec_retrieval_cmd_multi(bsc_pool_t *pool, zval *keys, zval **return_value, 
 
                     smart_str_appendl(&(bsc->outbuf), " ", 1);
                     smart_str_appendl(&(bsc->outbuf), key, key_len);
-                    MMC_DEBUG(
+                    BSC_DEBUG(
                         ("bsc_exec_retrieval_cmd_multi: scheduled key '%s' for '%s:%d' request length '%d'", key, bsc->host, bsc->port, bsc->outbuf.len));
                 }
             }
@@ -1513,11 +1513,11 @@ bsc_exec_retrieval_cmd_multi(bsc_pool_t *pool, zval *keys, zval **return_value, 
 
         /* third pass to read responses */
         for (j = 0; j < num_requests; j++) {
-            if (pool->requests[j]->status != MMC_STATUS_FAILED) {
+            if (pool->requests[j]->status != BSC_STATUS_FAILED) {
                 for (value = NULL; (result = bsc_read_value(pool->requests[j], &result_key, &result_key_len, &value,
                                                             &value_len, &flags TSRMLS_CC)) > 0;
                 value = NULL) {
-                    if (flags & MMC_SERIALIZED) {
+                    if (flags & BSC_SERIALIZED) {
                         zval *result;
                         MAKE_STD_ZVAL(result);
                         ZVAL_STRINGL(result, value, value_len, 0);
@@ -1550,7 +1550,7 @@ bsc_exec_retrieval_cmd_multi(bsc_pool_t *pool, zval *keys, zval **return_value, 
 
             smart_str_free(&(pool->requests[j]->outbuf));
         }
-    } while (result_status < 0 && MEMCACHE_G(allow_failover) && i++ < MEMCACHE_G(max_failover_attempts));
+    } while (result_status < 0 && BEANSTALKD_G(allow_failover) && i++ < BEANSTALKD_G(max_failover_attempts));
 
     /* post-process serialized values */
     if (serialized.len) {
@@ -1580,7 +1580,7 @@ bsc_read_value(bsc_t *bsc, char **key, int *key_len, char **value, int *value_le
 
     /* read "VALUE <key> <flags> <bytes>\r\n" header line */
     if ((response_len = bsc_readline(bsc TSRMLS_CC)) < 0) {
-        MMC_DEBUG(("failed to read the server's response"));
+        BSC_DEBUG(("failed to read the server's response"));
         return -1;
     }
 
@@ -1593,7 +1593,7 @@ bsc_read_value(bsc_t *bsc, char **key, int *key_len, char **value, int *value_le
         return -1;
     }
 
-    MMC_DEBUG(("bsc_read_value: data len is %d bytes", data_len));
+    BSC_DEBUG(("bsc_read_value: data len is %d bytes", data_len));
 
     /* data_len + \r\n + \0 */
     data = emalloc(data_len + 3);
@@ -1615,7 +1615,7 @@ bsc_read_value(bsc_t *bsc, char **key, int *key_len, char **value, int *value_le
 
     data[data_len] = '\0';
 
-    if ((*flags & MMC_COMPRESSED) && data_len > 0) {
+    if ((*flags & BSC_COMPRESSED) && data_len > 0) {
         char *result_data;
         unsigned long result_len = 0;
 
@@ -1649,7 +1649,7 @@ int bsc_delete(bsc_t *bsc, const char *key, int key_len, int time TSRMLS_DC) /* 
 
     command_len = spprintf(&command, 0, "delete %s %d", key, time);
 
-    MMC_DEBUG(("bsc_delete: trying to delete '%s'", key));
+    BSC_DEBUG(("bsc_delete: trying to delete '%s'", key));
 
     if (bsc_sendcmd(bsc, command, command_len TSRMLS_CC) < 0) {
         efree(command);
@@ -1658,11 +1658,11 @@ int bsc_delete(bsc_t *bsc, const char *key, int key_len, int time TSRMLS_DC) /* 
     efree(command);
 
     if ((response_len = bsc_readline(bsc TSRMLS_CC)) < 0){
-        MMC_DEBUG(("failed to read the server's response"));
+        BSC_DEBUG(("failed to read the server's response"));
         return -1;
     }
 
-    MMC_DEBUG(("bsc_delete: server's response is '%s'", bsc->inbuf));
+    BSC_DEBUG(("bsc_delete: server's response is '%s'", bsc->inbuf));
 
     if (bsc_str_left(bsc->inbuf, "DELETED", response_len, sizeof("DELETED") - 1)) {
         return 1;
@@ -1683,7 +1683,7 @@ static int bsc_flush(bsc_t *bsc, int timestamp TSRMLS_DC) /* {{{ */
     char *command;
     int command_len, response_len;
 
-    MMC_DEBUG(("bsc_flush: flushing the cache"));
+    BSC_DEBUG(("bsc_flush: flushing the cache"));
 
     if (timestamp) {
         command_len = spprintf(&command, 0, "flush_all %d", timestamp);
@@ -1702,7 +1702,7 @@ static int bsc_flush(bsc_t *bsc, int timestamp TSRMLS_DC) /* {{{ */
         return -1;
     }
 
-    MMC_DEBUG(("bsc_flush: server's response is '%s'", bsc->inbuf));
+    BSC_DEBUG(("bsc_flush: server's response is '%s'", bsc->inbuf));
 
     if (bsc_str_left(bsc->inbuf, "OK", response_len, sizeof("OK") - 1)) {
         return 1;
@@ -1909,13 +1909,13 @@ static int bsc_incr_decr(bsc_t *bsc, int cmd, char *key, int key_len, int value,
     efree(command);
 
     if ((response_len = bsc_readline(bsc TSRMLS_CC)) < 0) {
-        MMC_DEBUG(("failed to read the server's response"));
+        BSC_DEBUG(("failed to read the server's response"));
         return -1;
     }
 
-    MMC_DEBUG(("bsc_incr_decr: server's answer is: '%s'", bsc->inbuf));
+    BSC_DEBUG(("bsc_incr_decr: server's answer is: '%s'", bsc->inbuf));
     if (bsc_str_left(bsc->inbuf, "NOT_FOUND", response_len, sizeof("NOT_FOUND") - 1)) {
-        MMC_DEBUG(("failed to %sement variable - item with such key not found", cmd > 0 ? "incr" : "decr"));
+        BSC_DEBUG(("failed to %sement variable - item with such key not found", cmd > 0 ? "incr" : "decr"));
         return 0;
     } else if (bsc_str_left(bsc->inbuf, "ERROR", response_len, sizeof("ERROR") - 1) ||
                bsc_str_left(bsc->inbuf, "CLIENT_ERROR", response_len, sizeof("CLIENT_ERROR") - 1) ||
@@ -1938,7 +1938,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
     int result, key_len;
     char *key;
     long flags = 0, expire = 0;
-    char key_tmp[MMC_KEY_MAX_SIZE];
+    char key_tmp[BSC_KEY_MAX_SIZE];
     unsigned int key_tmp_len;
 
     php_serialize_data_t value_hash;
@@ -1957,7 +1957,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
     }
 
     //转换key中的不合法字符
-    if (bsc_prepare_key_ex(key, key_len, key_tmp, &key_tmp_len TSRMLS_CC) != MMC_OK) {
+    if (bsc_prepare_key_ex(key, key_len, key_tmp, &key_tmp_len TSRMLS_CC) != BSC_OK) {
         RETURN_FALSE;
     }
 
@@ -2013,7 +2013,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
                 RETURN_FALSE;
             }
 
-            flags |= MMC_SERIALIZED;
+            flags |= BSC_SERIALIZED;
             zval_dtor(&value_copy);
 
             result = bsc_pool_store(
@@ -2023,7 +2023,7 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
         }
     }
 
-    if (flags & MMC_SERIALIZED) {
+    if (flags & BSC_SERIALIZED) {
         smart_str_free(&buf);
     }
 
@@ -2044,7 +2044,7 @@ static void php_bsc_incr_decr(INTERNAL_FUNCTION_PARAMETERS, int cmd) /* {{{ */
     long value = 1, number;
     char *key;
     zval *bsc_object = getThis();
-    char key_tmp[MMC_KEY_MAX_SIZE];
+    char key_tmp[BSC_KEY_MAX_SIZE];
     unsigned int key_tmp_len;
 
     if (bsc_object == NULL) {
@@ -2062,7 +2062,7 @@ static void php_bsc_incr_decr(INTERNAL_FUNCTION_PARAMETERS, int cmd) /* {{{ */
         RETURN_FALSE;
     }
 
-    if (bsc_prepare_key_ex(key, key_len, key_tmp, &key_tmp_len TSRMLS_CC) != MMC_OK) {
+    if (bsc_prepare_key_ex(key, key_len, key_tmp, &key_tmp_len TSRMLS_CC) != BSC_OK) {
         RETURN_FALSE;
     }
 
@@ -2089,7 +2089,7 @@ static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) /* {{{
     bsc_pool_t *pool;
     int resource_type, host_len, errnum = 0, list_id;
     char *host, *error_string = NULL;
-    long port = MEMCACHE_G(default_port), timeout = MMC_DEFAULT_TIMEOUT, timeoutms = 0;
+    long port = BEANSTALKD_G(default_port), timeout = BSC_DEFAULT_TIMEOUT, timeoutms = 0;
 
     if (zend_parse_parameters(ZEND_NUM_ARGS()
         TSRMLS_CC, "s|lll", &host, &host_len, &port, &timeout, &timeoutms) == FAILURE) {
@@ -2097,16 +2097,16 @@ static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) /* {{{
     }
 
     if (timeoutms < 1) {
-        timeoutms = MEMCACHE_G(default_timeout_ms);
+        timeoutms = BEANSTALKD_G(default_timeout_ms);
     }
 
     /* initialize and connect server struct */
     if (persistent) {
-        bsc = bsc_find_persistent(host, host_len, port, timeout, MMC_DEFAULT_RETRY
+        bsc = bsc_find_persistent(host, host_len, port, timeout, BSC_DEFAULT_RETRY
         TSRMLS_CC);
     } else {
-        MMC_DEBUG(("php_bsc_connect: creating regular connection"));
-        bsc = bsc_server_new(host, host_len, port, 0, timeout, MMC_DEFAULT_RETRY
+        BSC_DEBUG(("php_bsc_connect: creating regular connection"));
+        bsc = bsc_server_new(host, host_len, port, 0, timeout, BSC_DEFAULT_RETRY
         TSRMLS_CC);
     }
 
@@ -2133,7 +2133,7 @@ static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) /* {{{
         bsc_pool_add(pool, bsc, 1);
 
         object_init_ex(return_value, beanstalkd_class_entry_ptr);
-        list_id = MEMCACHE_LIST_INSERT(pool, le_beanstalkd_pool);
+        list_id = BEANSTALKD_LIST_INSERT(pool, le_beanstalkd_pool);
         add_property_resource(return_value, "connection", list_id);
     } else if (zend_hash_find(Z_OBJPROP_P(bsc_object), "connection", sizeof("connection"), (void **) &connection) !=
                FAILURE) {
@@ -2150,17 +2150,178 @@ static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) /* {{{
         pool = bsc_pool_new(TSRMLS_C);
         bsc_pool_add(pool, bsc, 1);
 
-        list_id = MEMCACHE_LIST_INSERT(pool, le_beanstalkd_pool);
+        list_id = BEANSTALKD_LIST_INSERT(pool, le_beanstalkd_pool);
         add_property_resource(bsc_object, "connection", list_id);
         RETURN_TRUE;
     }
 }
 /* }}} */
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */
+
+/* {{{ proto object beanstalkd_connect( string host [, int port [, int timeout ] ])
+   Connects to server and returns a Memcache object */
+PHP_FUNCTION(beanstalkd_connect) {
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
+}
+/* }}} */
+
+/* {{{ proto object beanstalkd_pconnect( string host [, int port [, int timeout ] ])
+   Connects to server and returns a Memcache object */
+PHP_FUNCTION(beanstalkd_pconnect) {
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1);
+}
+
+
+/* {{{ proto bool beanstalkd_add_server( string host [, int port [, bool persistent [, int weight [, int timeout [, int retry_interval [, bool status [, callback failure_callback ] ] ] ] ] ] ])
+   Adds a connection to the pool. The order in which this function is called is significant */
+PHP_FUNCTION(beanstalkd_add_server) {
+    zval * *connection, *bsc_object = getThis(), *failure_callback = NULL;
+    bsc_pool_t *pool;
+    bsc_t *bsc;
+    long port = BEANSTALKD_G(
+        default_port), weight = 1, timeout = MMC_DEFAULT_TIMEOUT, retry_interval = MMC_DEFAULT_RETRY, timeoutms = 0;
+    zend_bool persistent = 1, status = 1;
+    int resource_type, host_len, list_id;
+    char *host;
+
+    if (bsc_object) {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "s|lblllbzl", &host, &host_len, &port, &persistent, &weight, &timeout, &retry_interval, &status, &failure_callback, &timeoutms) == FAILURE) {
+            return;
+        }
+    }
+    else {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "Os|lblllbzl", &bsc_object, beanstalkd_class_entry_ptr, &host, &host_len, &port, &persistent, &weight, &timeout, &retry_interval, &status, &failure_callback, &timeoutms) == FAILURE) {
+            return;
+        }
+    }
+
+    if (timeoutms < 1) {
+        timeoutms = BEANSTALKD_G(default_timeout_ms);
+    }
+
+    if (weight < 1) {
+        php_error_docref(NULL
+        TSRMLS_CC, E_WARNING, "weight must be a positive integer");
+        RETURN_FALSE;
+    }
+
+    if (failure_callback != NULL && Z_TYPE_P(failure_callback) != IS_NULL) {
+        if (!MEMCACHE_IS_CALLABLE(failure_callback, 0, NULL)) {
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Invalid failure callback");
+            RETURN_FALSE;
+        }
+    }
+
+    /* lazy initialization of server struct */
+    if (persistent) {
+        bsc = bsc_find_persistent(host, host_len, port, timeout, retry_interval
+        TSRMLS_CC);
+    }
+    else {
+        MMC_DEBUG(("beanstalkd_add_server: initializing regular struct"));
+        bsc = bsc_server_new(host, host_len, port, 0, timeout, retry_interval
+        TSRMLS_CC);
+    }
+
+    bsc->connect_timeoutms = timeoutms;
+
+    /* add server in failed mode */
+    if (!status) {
+        bsc->status = MMC_STATUS_FAILED;
+    }
+
+    if (failure_callback != NULL && Z_TYPE_P(failure_callback) != IS_NULL) {
+        bsc->failure_callback = failure_callback;
+        bsc_server_callback_ctor(&bsc->failure_callback
+        TSRMLS_CC);
+    }
+
+    /* initialize pool if need be */
+    if (zend_hash_find(Z_OBJPROP_P(bsc_object), "connection", sizeof("connection"), (void **) &connection) == FAILURE) {
+        pool = bsc_pool_new(TSRMLS_C);
+        list_id = MEMCACHE_LIST_INSERT(pool, le_beanstalkd_pool);
+        add_property_resource(bsc_object, "connection", list_id);
+    }
+    else {
+        pool = (bsc_pool_t *) zend_list_find(Z_LVAL_PP(connection), &resource_type);
+        if (!pool || resource_type != le_beanstalkd_pool) {
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Failed to extract 'connection' variable from object");
+            RETURN_FALSE;
+        }
+    }
+
+    bsc_pool_add(pool, bsc, weight);
+    RETURN_TRUE;
+}
+/* }}} */
+
+PHP_FUNCTION(beanstalkd_producer_put){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_producer_use){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_reserve){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_delete){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_bury){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_watch){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_ignore){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_worker_reply){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_peek){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_kick){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_stats_job){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_stats_tube){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_stats){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_list_tubes){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_list_tubes_used){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_list_quit){
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_other_pause_tube){
+    RETURN_TRUE;
+}

@@ -29,6 +29,11 @@ extern zend_module_entry beanstalkd_module_entry;
 
 #define BSC_BUF_SIZE 4096
 #define BSC_DEFAULT_TIMEOUT 1				/* seconds */
+#define BSC_KEY_MAX_SIZE 250				/* stoled from memcached sources =) */
+#define BSC_DEFAULT_RETRY 15 				/* retry failed server after x seconds */
+#define BSC_DEFAULT_SAVINGS 0.2				/* minimum 20% savings for compression to be used */
+#define BSC_DEFAULT_CACHEDUMP_LIMIT	100		/* number of entries */
+
 #define BSC_STATUS_FAILED 0
 #define BSC_STATUS_DISCONNECTED 1
 #define BSC_STATUS_UNKNOWN 2
@@ -71,7 +76,7 @@ PHP_FUNCTION(beanstalkd_set_server_params);
 
 typedef struct bsc {
     php_stream				*stream;                //数据流句柄（指针）
-    char					inbuf[MMC_BUF_SIZE];    //用来存放从流中读取的数据的字符空间
+    char					inbuf[BSC_BUF_SIZE];    //用来存放从流中读取的数据的字符空间
     smart_str				outbuf;
     char					*host;
     unsigned short			port;
@@ -107,12 +112,12 @@ typedef struct bsc_hash {
 } bsc_hash_t;
 
 typedef struct bsc_pool {
-    bsc_t					**servers;				//连接池中memcache服务器体指针的指针
-    int						num_servers;			//连接池中memcache服务器的数量
-    bsc_t					**requests;				//连接池中请求体的指针的指针
-    int						compress_threshold;		//是否开启大值压缩，存储时存储项的内容超过多大时对值进行压缩然后存储
-    double					min_compress_savings;	//压缩比例
-    zend_bool				in_free;				//是否正在被释放
+    bsc_t					**servers;
+    int						num_servers;
+    bsc_t					**requests;
+    int						compress_threshold;
+    double					min_compress_savings;
+    zend_bool				in_free;
     bsc_hash_t				*hash;
     void					*hash_state;
 } bsc_pool_t;
