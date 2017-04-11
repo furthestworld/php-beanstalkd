@@ -49,7 +49,9 @@ PHP_MINFO_FUNCTION(beanstalkd);
 
 PHP_FUNCTION(beanstalkd_connect);
 PHP_FUNCTION(beanstalkd_pconnect);
+PHP_FUNCTION(beanstalkd_add_server);
 PHP_FUNCTION(beanstalkd_put);
+PHP_FUNCTION(beanstalkd_list_tubes);
 
 
 #define BSC_BUF_SIZE 4096
@@ -169,6 +171,7 @@ bsc_pool_t *bsc_pool_new(TSRMLS_D);
 void bsc_pool_free(bsc_pool_t * TSRMLS_DC);
 void bsc_pool_add(bsc_pool_t *, bsc_t *, unsigned int);
 int bsc_pool_store(bsc_pool_t *, const char *, int, const char *, int, int, int, const char *, int TSRMLS_DC);
+int bsc_pool_other_cmd(bsc_pool_t *, const char *, int TSRMLS_DC);
 int bsc_open(bsc_t *, int, char **, int * TSRMLS_DC);
 int bsc_exec_retrieval_cmd(bsc_pool_t *, const char *, int, zval **, zval * TSRMLS_DC);
 int bsc_delete(bsc_t *, const char *, int, int TSRMLS_DC);

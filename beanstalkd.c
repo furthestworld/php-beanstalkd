@@ -64,6 +64,7 @@ ZEND_DECLARE_MODULE_GLOBALS(beanstalkd)
 zend_function_entry beanstalkd_functions[] = {
     PHP_FE(beanstalkd_connect, NULL)
     PHP_FE(beanstalkd_pconnect, NULL)
+    PHP_FE(beanstalkd_add_server, NULL)
     PHP_FE(beanstalkd_put, NULL)
 //    PHP_FE(beanstalkd_use, NULL)
 //    PHP_FE(beanstalkd_reserve, NULL)
@@ -78,7 +79,7 @@ zend_function_entry beanstalkd_functions[] = {
 //    PHP_FE(beanstalkd_stats_job, NULL)
 //    PHP_FE(beanstalkd_stats_tube, NULL)
 //    PHP_FE(beanstalkd_stats, NULL)
-//    PHP_FE(beanstalkd_list_tubes, NULL)
+    PHP_FE(beanstalkd_list_tubes, NULL)
 //    PHP_FE(beanstalkd_list_tube_used, NULL)
 //    PHP_FE(beanstalkd_list_tube_watched, NULL)
 //    PHP_FE(beanstalkd_quit, NULL)
@@ -90,6 +91,7 @@ zend_function_entry beanstalkd_functions[] = {
 static zend_function_entry php_beanstalkd_class_functions[] = {
     PHP_FALIAS(connect, beanstalkd_connect, NULL)
     PHP_FALIAS(pconnect, beanstalkd_pconnect, NULL)
+    PHP_FALIAS(addserver, beanstalkd_add_server, NULL)
     PHP_FALIAS(put, beanstalkd_put, NULL)
 //    PHP_FALIAS(use, beanstalkd_use, NULL)
 //    PHP_FALIAS(reserve, beanstalkd_reserve, NULL)
@@ -104,7 +106,7 @@ static zend_function_entry php_beanstalkd_class_functions[] = {
 //    PHP_FALIAS(stats_job, beanstalkd_stats_job, NULL)
 //    PHP_FALIAS(stats_tube, beanstalkd_stats_tube, NULL)
 //    PHP_FALIAS(stats, beanstalkd_stats, NULL)
-//    PHP_FALIAS(list_tubes, beanstalkd_list_tubes, NULL)
+    PHP_FALIAS(list_tubes, beanstalkd_list_tubes, NULL)
 //    PHP_FALIAS(list_tube_used, beanstalkd_list_tube_used, NULL)
 //    PHP_FALIAS(list_tube_watched, beanstalkd_list_tube_watched, NULL)
 //    PHP_FALIAS(quit, beanstalkd_quit, NULL)
@@ -253,6 +255,8 @@ static int bsc_flush(bsc_t *, int TSRMLS_DC);
 
 static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *, int);
 
+static void php_bsc_other_cmd(INTERNAL_FUNCTION_PARAMETERS, char *, int);
+
 static int bsc_get_stats(bsc_t *, char *, int, int, zval *TSRMLS_DC);
 
 static int bsc_incr_decr(bsc_t *, int, char *, int, int, long *TSRMLS_DC);
@@ -357,40 +361,6 @@ void bsc_debug(const char *format, ...) /* {{{ */
 /* }}} */
 #endif
 
-PHP_FUNCTION(beanstalkd_connect) {
-    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
-}
-
-PHP_FUNCTION(beanstalkd_pconnect) {
-    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1);
-}
-
-PHP_FUNCTION(beanstalkd_put) {
-    php_bsc_store(INTERNAL_FUNCTION_PARAM_PASSTHRU, "put", sizeof("put") - 1);
-}
-
-PHP_FUNCTION(beanstalkd_use) {
-    php_bsc_store(INTERNAL_FUNCTION_PARAM_PASSTHRU, "use", sizeof("use") - 1);
-}
-
-
-PHP_FUNCTION(beanstalkd_debug) {
-#if ZEND_DEBUG
-zend_bool onoff;
-
-if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "b", &onoff) == FAILURE) {
-    return;
-}
-
-BEANSTALKD_G(debug_mode) = onoff ? 1 : 0;
-
-RETURN_TRUE;
-#else
-    RETURN_FALSE;
-#endif
-
-}
-
 static struct timeval _convert_timeoutms_to_ts(long msecs) /* {{{ */
 {
     struct timeval tv;
@@ -416,8 +386,9 @@ static void bsc_server_callback_dtor(zval **callback TSRMLS_DC) /* {{{ */
     zval_ptr_dtor(callback);
 }
 
-static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC)  {
-    bsc_server_callback_dtor(&bsc->failure_callback TSRMLS_CC);
+static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC) {
+    bsc_server_callback_dtor(&bsc->failure_callback
+    TSRMLS_CC);
     bsc->failure_callback = NULL;
 
     if (bsc->error != NULL) {
@@ -425,6 +396,7 @@ static void bsc_server_sleep(bsc_t *bsc TSRMLS_DC)  {
         bsc->error = NULL;
     }
 }
+
 /* }}} */
 
 static void bsc_server_callback_ctor(zval **callback TSRMLS_DC) /* {{{ */
@@ -539,6 +511,129 @@ static void php_bsc_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
     }
 }
 
+
+PHP_FUNCTION(beanstalkd_connect) {
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0);
+}
+
+PHP_FUNCTION(beanstalkd_pconnect) {
+    php_bsc_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1);
+}
+
+PHP_FUNCTION(beanstalkd_add_server) {
+
+    zval * *connection, *bsc_object = getThis(), *failure_callback = NULL;
+    bsc_pool_t *pool;
+    bsc_t *bsc;
+    long port = BEANSTALKD_G(default_port), weight = 1, timeout = BSC_DEFAULT_TIMEOUT, retry_interval = BSC_DEFAULT_RETRY, timeoutms = 0;
+    zend_bool persistent = 1, status = 1;
+    int resource_type, host_len, list_id;
+    char *host;
+
+    if (bsc_object) {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "s|lblllbzl", &host, &host_len, &port, &persistent, &weight, &timeout, &retry_interval, &status, &failure_callback, &timeoutms) == FAILURE) {
+            return;
+        }
+    }
+    else {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "Os|lblllbzl", &bsc_object, beanstalkd_class_entry_ptr, &host, &host_len, &port, &persistent, &weight, &timeout, &retry_interval, &status, &failure_callback, &timeoutms) == FAILURE) {
+            return;
+        }
+    }
+
+    if (timeoutms < 1) {
+        timeoutms = BEANSTALKD_G(default_timeout_ms);
+    }
+
+    if (weight < 1) {
+        php_error_docref(NULL
+        TSRMLS_CC, E_WARNING, "weight must be a positive integer");
+        RETURN_FALSE;
+    }
+
+    if (failure_callback != NULL && Z_TYPE_P(failure_callback) != IS_NULL) {
+        if (!BEANSTALKD_IS_CALLABLE(failure_callback, 0, NULL)) {
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Invalid failure callback");
+            RETURN_FALSE;
+        }
+    }
+
+    /* lazy initialization of server struct */
+    if (persistent) {
+        bsc = bsc_find_persistent(host, host_len, port, timeout, retry_interval
+        TSRMLS_CC);
+    }
+    else {
+        BSC_DEBUG(("beanstalkd_add_server: initializing regular struct"));
+        bsc = bsc_server_new(host, host_len, port, 0, timeout, retry_interval
+        TSRMLS_CC);
+    }
+
+    bsc->connect_timeoutms = timeoutms;
+
+    /* add server in failed mode */
+    if (!status) {
+        bsc->status = BSC_STATUS_FAILED;
+    }
+
+    if (failure_callback != NULL && Z_TYPE_P(failure_callback) != IS_NULL) {
+        bsc->failure_callback = failure_callback;
+        bsc_server_callback_ctor(&bsc->failure_callback
+        TSRMLS_CC);
+    }
+
+    /* initialize pool if need be */
+    if (zend_hash_find(Z_OBJPROP_P(bsc_object), "connection", sizeof("connection"), (void **) &connection) == FAILURE) {
+        pool = bsc_pool_new(TSRMLS_C);
+        list_id = BEANSTALKD_LIST_INSERT(pool, le_beanstalkd_pool);
+        add_property_resource(bsc_object, "connection", list_id);
+    }
+    else {
+        pool = (bsc_pool_t *) zend_list_find(Z_LVAL_PP(connection), &resource_type);
+        if (!pool || resource_type != le_beanstalkd_pool) {
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Failed to extract 'connection' variable from object");
+            RETURN_FALSE;
+        }
+    }
+
+    bsc_pool_add(pool, bsc, weight);
+    RETURN_TRUE;
+}
+
+PHP_FUNCTION(beanstalkd_put) {
+    php_bsc_store(INTERNAL_FUNCTION_PARAM_PASSTHRU, "put", sizeof("put") - 1);
+}
+
+PHP_FUNCTION(beanstalkd_use) {
+    php_bsc_store(INTERNAL_FUNCTION_PARAM_PASSTHRU, "use", sizeof("use") - 1);
+}
+
+
+PHP_FUNCTION(beanstalkd_list_tubes) {
+    php_bsc_other_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "list-tubes", sizeof("list-tubes") - 1);
+}
+
+
+PHP_FUNCTION(beanstalkd_debug) {
+#if ZEND_DEBUG
+zend_bool onoff;
+
+if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "b", &onoff) == FAILURE) {
+    return;
+}
+
+BEANSTALKD_G(debug_mode) = onoff ? 1 : 0;
+
+RETURN_TRUE;
+#else
+    RETURN_FALSE;
+#endif
+
+}
 
 bsc_t *bsc_server_new(char *host, int host_len, unsigned short port, int persistent, int timeout, int retry_interval
                       TSRMLS_DC) /* {{{ */
@@ -667,9 +762,11 @@ void bsc_pool_free(bsc_pool_t *pool TSRMLS_DC) /* {{{ */
             continue;
         }
         if (pool->servers[i]->persistent == 0 && pool->servers[i]->host != NULL) {
-            bsc_server_free(pool->servers[i] TSRMLS_CC);
+            bsc_server_free(pool->servers[i]
+            TSRMLS_CC);
         } else {
-            bsc_server_sleep(pool->servers[i] TSRMLS_CC);
+            bsc_server_sleep(pool->servers[i]
+            TSRMLS_CC);
         }
         pool->servers[i] = NULL;
     }
@@ -712,9 +809,11 @@ static int bsc_pool_close(bsc_pool_t *pool TSRMLS_DC) /* disconnects and removes
 
         for (i = 0; i < pool->num_servers; i++) {
             if (pool->servers[i]->persistent == 0 && pool->servers[i]->host != NULL) {
-                bsc_server_free(pool->servers[i] TSRMLS_CC);
+                bsc_server_free(pool->servers[i]
+                TSRMLS_CC);
             } else {
-                bsc_server_sleep(pool->servers[i] TSRMLS_CC);
+                bsc_server_sleep(pool->servers[i]
+                TSRMLS_CC);
             }
         }
 
@@ -814,6 +913,26 @@ int bsc_pool_store(bsc_pool_t *pool, const char *command, int command_len, const
     if (data != NULL) {
         efree(data);
     }
+
+    efree(request);
+
+    return result;
+}
+
+int bsc_pool_other_cmd(bsc_pool_t *pool, const char *command, int command_len TSRMLS_DC) {
+    bsc_t *bsc;
+    char *request;
+    int request_len, result = -1;
+
+    request = emalloc(
+        command_len
+        + sizeof("\r\n") - 1
+    );
+
+    request_len = sprintf(request, "%s\r\n", command);
+    request[request_len] = '\0';
+
+    //...
 
     efree(request);
 
@@ -992,9 +1111,10 @@ static void bsc_server_disconnect(bsc_t *bsc TSRMLS_DC) /* {{{ */
 
 void bsc_server_deactivate(bsc_t *bsc TSRMLS_DC) /* 	disconnect and marks the server as down {{{ */
 {
-    bsc_server_disconnect(bsc TSRMLS_CC);
+    bsc_server_disconnect(bsc
+    TSRMLS_CC);
     bsc->status = BSC_STATUS_FAILED;
-    bsc->failed = (long)time(NULL);
+    bsc->failed = (long) time(NULL);
 
     if (bsc->failure_callback != NULL) {
         zval *retval = NULL;
@@ -1008,33 +1128,38 @@ void bsc_server_deactivate(bsc_t *bsc TSRMLS_DC) /* 	disconnect and marks the se
         params[4] = &errnum;
 
         MAKE_STD_ZVAL(host);
-        MAKE_STD_ZVAL(tcp_port); MAKE_STD_ZVAL(udp_port);
-        MAKE_STD_ZVAL(error); MAKE_STD_ZVAL(errnum);
+        MAKE_STD_ZVAL(tcp_port);
+        MAKE_STD_ZVAL(udp_port);
+        MAKE_STD_ZVAL(error);
+        MAKE_STD_ZVAL(errnum);
 
         ZVAL_STRING(host, bsc->host, 1);
-        ZVAL_LONG(tcp_port, bsc->port); ZVAL_LONG(udp_port, 0);
+        ZVAL_LONG(tcp_port, bsc->port);
+        ZVAL_LONG(udp_port, 0);
 
         if (bsc->error != NULL) {
             ZVAL_STRING(error, bsc->error, 1);
-        }
-        else {
+        } else {
             ZVAL_NULL(error);
         }
         ZVAL_LONG(errnum, bsc->errnum);
 
-        call_user_function_ex(EG(function_table), NULL, bsc->failure_callback, &retval, 5, params, 0, NULL TSRMLS_CC);
+        call_user_function_ex(EG(function_table), NULL, bsc->failure_callback, &retval, 5, params, 0, NULL
+        TSRMLS_CC);
 
         zval_ptr_dtor(&host);
-        zval_ptr_dtor(&tcp_port); zval_ptr_dtor(&udp_port);
-        zval_ptr_dtor(&error); zval_ptr_dtor(&errnum);
+        zval_ptr_dtor(&tcp_port);
+        zval_ptr_dtor(&udp_port);
+        zval_ptr_dtor(&error);
+        zval_ptr_dtor(&errnum);
 
         if (retval != NULL) {
             zval_ptr_dtor(&retval);
         }
-    }
-    else {
-        php_error_docref(NULL TSRMLS_CC, E_NOTICE, "Server %s (tcp %d) failed with: %s (%d)",
-                bsc->host, bsc->port, bsc->error, bsc->errnum);
+    } else {
+        php_error_docref(NULL
+        TSRMLS_CC, E_NOTICE, "Server %s (tcp %d) failed with: %s (%d)",
+            bsc->host, bsc->port, bsc->error, bsc->errnum);
     }
 }
 
@@ -1065,7 +1190,7 @@ static int bsc_readline(bsc_t *bsc TSRMLS_DC) /* {{{ */
 static int bsc_server_store(bsc_t *bsc, const char *request, int request_len TSRMLS_DC) /* {{{ */
 {
     int response_len;
-    php_netstream_data_t *sock = (php_netstream_data_t*)bsc->stream->abstract;
+    php_netstream_data_t *sock = (php_netstream_data_t *) bsc->stream->abstract;
 
     if (bsc->timeoutms > 1) {
         sock->timeout = _convert_timeoutms_to_ts(bsc->timeoutms);
@@ -1080,18 +1205,20 @@ static int bsc_server_store(bsc_t *bsc, const char *request, int request_len TSR
         return -1;
     }
 
-    if(bsc_str_left(bsc->inbuf, "STORED", response_len, sizeof("STORED") - 1)) {
+    if (bsc_str_left(bsc->inbuf, "STORED", response_len, sizeof("STORED") - 1)) {
         return 1;
     }
 
     /* return FALSE */
-    if(bsc_str_left(bsc->inbuf, "NOT_STORED", response_len, sizeof("NOT_STORED") - 1)) {
+    if (bsc_str_left(bsc->inbuf, "NOT_STORED", response_len, sizeof("NOT_STORED") - 1)) {
         return 0;
     }
 
     /* return FALSE without failover */
-    if (bsc_str_left(bsc->inbuf, "SERVER_ERROR out of memory", response_len, sizeof("SERVER_ERROR out of memory") - 1) ||
-        bsc_str_left(bsc->inbuf, "SERVER_ERROR object too large", response_len, sizeof("SERVER_ERROR object too large")-1)) {
+    if (bsc_str_left(bsc->inbuf, "SERVER_ERROR out of memory", response_len,
+                     sizeof("SERVER_ERROR out of memory") - 1) ||
+        bsc_str_left(bsc->inbuf, "SERVER_ERROR object too large", response_len,
+                     sizeof("SERVER_ERROR object too large") - 1)) {
         return 0;
     }
 
@@ -1112,7 +1239,8 @@ static void bsc_server_free(bsc_t *bsc TSRMLS_DC) /* {{{ */
     }
     bsc->in_free = 1;
 
-    bsc_server_sleep(bsc TSRMLS_CC);
+    bsc_server_sleep(bsc
+    TSRMLS_CC);
 
     if (bsc->persistent) {
         free(bsc->host);
@@ -1142,7 +1270,8 @@ static char *bsc_get_version(bsc_t *bsc TSRMLS_DC) /* {{{ */
     }
 
     if (bsc_str_left(bsc->inbuf, "VERSION ", response_len, sizeof("VERSION ") - 1)) {
-        version_str = estrndup(bsc->inbuf + sizeof("VERSION ") - 1, response_len - (sizeof("VERSION ") - 1) - (sizeof("\r\n") - 1) );
+        version_str = estrndup(bsc->inbuf + sizeof("VERSION ") - 1,
+                               response_len - (sizeof("VERSION ") - 1) - (sizeof("\r\n") - 1));
         return version_str;
     }
 
@@ -1187,22 +1316,27 @@ static int bsc_compress(char **result, unsigned long *result_len, const char *da
 
     switch (status) {
         case Z_MEM_ERROR:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Not enough memory to perform compression");
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Not enough memory to perform compression");
             break;
         case Z_BUF_ERROR:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Not enough room in the output buffer to perform compression");
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Not enough room in the output buffer to perform compression");
             break;
         case Z_STREAM_ERROR:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Invalid compression level");
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Invalid compression level");
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknown error during compression");
+            php_error_docref(NULL
+            TSRMLS_CC, E_WARNING, "Unknown error during compression");
             break;
     }
 
     efree(*result);
     return 0;
 }
+
 /* }}}*/
 
 static int bsc_uncompress(char **result, unsigned long *result_len, const char *data, int data_len) /* {{{ */
@@ -1212,7 +1346,7 @@ static int bsc_uncompress(char **result, unsigned long *result_len, const char *
     char *tmp1 = NULL;
 
     do {
-        *result_len = (unsigned long)data_len * (1 << factor++);
+        *result_len = (unsigned long) data_len * (1 << factor++);
         *result = (char *) erealloc(tmp1, *result_len);
         status = uncompress((unsigned char *) *result, result_len, (unsigned const char *) data, data_len);
         tmp1 = *result;
@@ -1599,6 +1733,65 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
     RETURN_FALSE;
 }
 
+/*
+ * Beanstalkd Producer Commands
+ */
+static void php_bsc_producer_cmd(INTERNAL_FUNCTION_PARAMETERS, char *command, int command_len) {
+
+}
+
+/*
+ * Beanstalkd Worker Commands
+ */
+static void php_bsc_worker_cmd(INTERNAL_FUNCTION_PARAMETERS, char *command, int command_len) {
+
+}
+
+/*
+ * Beanstalkd Other Commands
+ */
+static void php_bsc_other_cmd(INTERNAL_FUNCTION_PARAMETERS, char *command, int command_len) {
+    bsc_pool_t *pool;
+    zval *value, *bsc_object = getThis();
+
+    int result, key_len;
+    char *key;
+    long flags = 0, expire = 0;
+    char key_tmp[BSC_KEY_MAX_SIZE];
+    unsigned int key_tmp_len;
+
+    php_serialize_data_t value_hash;
+    smart_str buf = {0};
+
+    if (bsc_object == NULL) {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "Os", &bsc_object, beanstalkd_class_entry_ptr, &key, &key_len) == FAILURE) {
+            return;
+        }
+    } else {
+        if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &key, &key_len) == FAILURE) {
+            return;
+        }
+    }
+
+    if (!bsc_get_pool(bsc_object, &pool TSRMLS_CC) || !pool->num_servers) {
+        RETURN_FALSE;
+    }
+
+
+    result = bsc_pool_store(
+        pool, command, command_len, key_tmp, key_tmp_len, flags, expire,
+        buf.c, buf.len
+    TSRMLS_CC);
+
+
+    if (result > 0) {
+        RETURN_TRUE;
+    }
+
+    RETURN_FALSE;
+}
+
 static int bsc_incr_decr(bsc_t *bsc, int cmd, char *key, int key_len, int value, long *number TSRMLS_DC) /* {{{ */
 {
     char *command;
@@ -1726,6 +1919,66 @@ int bsc_prepare_key(zval *key, char *result, unsigned int *result_len TSRMLS_DC)
     }
 }
 
+
+bsc_t *bsc_find_persistent(char *host, int host_len, int port, int timeout, int retry_interval TSRMLS_DC) /* {{{ */
+{
+    bsc_t *bsc;
+    zend_rsrc_list_entry *le;
+    char *hash_key;
+    int hash_key_len;
+
+    BSC_DEBUG(("bsc_find_persistent: seeking for persistent connection"));
+    hash_key_len = spprintf(&hash_key, 0, "bsc_connect___%s:%d", host, port);
+
+    if (zend_hash_find(&EG(persistent_list), hash_key, hash_key_len+1, (void **) &le) == FAILURE) {
+        zend_rsrc_list_entry new_le;
+        BSC_DEBUG(("bsc_find_persistent: connection wasn't found in the hash"));
+
+        bsc = bsc_server_new(host, host_len, port, 1, timeout, retry_interval TSRMLS_CC);
+        new_le.type = le_pbeanstalkd;
+        new_le.ptr  = bsc;
+
+        /* register new persistent connection */
+        if (zend_hash_update(&EG(persistent_list), hash_key, hash_key_len+1, (void *) &new_le, sizeof(zend_rsrc_list_entry), NULL) == FAILURE) {
+            bsc_server_free(bsc TSRMLS_CC);
+            bsc = NULL;
+        } else {
+            BEANSTALKD_LIST_INSERT(bsc, le_pbeanstalkd);
+        }
+    }
+    else if (le->type != le_pbeanstalkd || le->ptr == NULL) {
+        zend_rsrc_list_entry new_le;
+        BSC_DEBUG(("bsc_find_persistent: something was wrong, reconnecting.."));
+        zend_hash_del(&EG(persistent_list), hash_key, hash_key_len+1);
+
+        bsc = bsc_server_new(host, host_len, port, 1, timeout, retry_interval TSRMLS_CC);
+        new_le.type = le_pbeanstalkd;
+        new_le.ptr  = bsc;
+
+        /* register new persistent connection */
+        if (zend_hash_update(&EG(persistent_list), hash_key, hash_key_len+1, (void *) &new_le, sizeof(zend_rsrc_list_entry), NULL) == FAILURE) {
+            bsc_server_free(bsc TSRMLS_CC);
+            bsc = NULL;
+        }
+        else {
+            BEANSTALKD_LIST_INSERT(bsc, le_pbeanstalkd);
+        }
+    }
+    else {
+        BSC_DEBUG(("bsc_find_persistent: connection found in the hash"));
+        bsc = (bsc_t *)le->ptr;
+        bsc->timeout = timeout;
+        bsc->retry_interval = retry_interval;
+
+        /* attempt to reconnect this node before failover in case connection has gone away */
+        if (bsc->status == BSC_STATUS_CONNECTED) {
+            bsc->status = BSC_STATUS_UNKNOWN;
+        }
+    }
+
+    efree(hash_key);
+    return bsc;
+}
 /*
  * Local variables:
  * tab-width: 4
