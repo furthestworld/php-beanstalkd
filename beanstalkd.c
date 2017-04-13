@@ -254,6 +254,7 @@ static int bsc_read_value(bsc_t *, char **, int *, char **, int *, int *TSRMLS_D
 static int bsc_flush(bsc_t *, int TSRMLS_DC);
 
 static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *, int);
+static void php_bsc_producer_cmd(INTERNAL_FUNCTION_PARAMETERS, char *, int);
 
 static void php_bsc_other_cmd(INTERNAL_FUNCTION_PARAMETERS, char *, int);
 
@@ -605,7 +606,7 @@ PHP_FUNCTION(beanstalkd_add_server) {
 }
 
 PHP_FUNCTION(beanstalkd_put) {
-    php_bsc_store(INTERNAL_FUNCTION_PARAM_PASSTHRU, "put", sizeof("put") - 1);
+    php_bsc_producer_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "put", sizeof("put") - 1);
 }
 
 PHP_FUNCTION(beanstalkd_use) {
@@ -835,6 +836,64 @@ static int bsc_pool_close(bsc_pool_t *pool TSRMLS_DC) /* disconnects and removes
 
 /* }}} */
 
+int bsc_pool_producer_put(bsc_pool_t *pool,
+                          const char *command,
+                          int command_len,
+                          int priority,
+                          int delay,
+                          int time_to_run,
+                          const char *value,
+                          int value_len TSRMLS_DC) /* {{{ */
+{
+    bsc_t *bsc;
+    char *request;
+    int request_len, result = -1;
+    char *key_copy = NULL, *data = NULL;
+
+    request = emalloc(
+            command_len
+            + 1 /* space */
+            + MAX_LENGTH_OF_LONG /* priority */
+            + 1 /* space */
+            + MAX_LENGTH_OF_LONG /* delay */
+            + 1 /* space */
+            + MAX_LENGTH_OF_LONG /* time to run */
+            + 1 /* space */
+            + value_len
+            + sizeof("\r\n") - 1
+            + 1
+    );
+
+    request_len = sprintf(request, "%s %d %d %d %d\r\n", command, priority, delay, time_to_run, value_len);
+
+    memcpy(request + request_len, value, value_len);
+    request_len += value_len;
+
+    memcpy(request + request_len, "\r\n", sizeof("\r\n") - 1);
+    request_len += sizeof("\r\n") - 1;
+
+    request[request_len] = '\0';
+
+    while (result < 0 && (bsc = bsc_pool_find(pool, key, key_len
+        TSRMLS_CC)) != NULL) {
+        if ((result = bsc_server_store(bsc, request, request_len TSRMLS_CC)) < 0) {
+            bsc_server_failure(bsc
+            TSRMLS_CC);
+        }
+    }
+
+    if (key_copy != NULL) {
+        efree(key_copy);
+    }
+
+    if (data != NULL) {
+        efree(data);
+    }
+
+    efree(request);
+
+    return result;
+}
 int bsc_pool_store(bsc_pool_t *pool, const char *command, int command_len, const char *key, int key_len, int flags,
                    int expire, const char *value, int value_len TSRMLS_DC) /* {{{ */
 {
@@ -1737,7 +1796,110 @@ static void php_bsc_store(INTERNAL_FUNCTION_PARAMETERS, char *command, int comma
  * Beanstalkd Producer Commands
  */
 static void php_bsc_producer_cmd(INTERNAL_FUNCTION_PARAMETERS, char *command, int command_len) {
+    bsc_pool_t *pool;
+    zval *value, *bsc_object = getThis();
 
+    int result, key_len;
+    char *key;
+    long flags = 0, expire = 0;
+    char key_tmp[BSC_KEY_MAX_SIZE];
+    unsigned int key_tmp_len;
+
+    php_serialize_data_t value_hash;
+    smart_str buf = {0};
+
+    if (bsc_object == NULL) {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "Osz|ll", &bsc_object,
+                    beanstalkd_class_entry_ptr,
+                    &key,
+                    &key_len,
+                    &value, &flags, &expire) == FAILURE) {
+            return;
+        }
+    } else {
+        if (zend_parse_parameters(ZEND_NUM_ARGS()
+            TSRMLS_CC, "sz|ll", &key, &key_len, &value, &flags, &expire) == FAILURE) {
+            return;
+        }
+    }
+
+    //转换key中的不合法字符
+    if (bsc_prepare_key_ex(key, key_len, key_tmp, &key_tmp_len TSRMLS_CC) != BSC_OK) {
+        RETURN_FALSE;
+    }
+
+    if (!bsc_get_pool(bsc_object, &pool TSRMLS_CC) || !pool->num_servers) {
+        RETURN_FALSE;
+    }
+
+    switch (Z_TYPE_P(value)) {
+        case IS_STRING:
+            result = bsc_pool_producer_put(
+                    pool, command, command_len, key_tmp, key_tmp_len, flags, expire,
+                    Z_STRVAL_P(value), Z_STRLEN_P(value)
+            TSRMLS_CC);
+            break;
+
+        case IS_LONG:
+        case IS_DOUBLE:
+        case IS_BOOL: {
+            zval value_copy;
+
+            /* FIXME: we should be using 'Z' instead of this, but unfortunately it's PHP5-only */
+            value_copy = *value;
+            zval_copy_ctor(&value_copy);
+            convert_to_string(&value_copy);
+
+            result = bsc_pool_producer_put(
+                    pool, command, command_len, key_tmp, key_tmp_len, flags, expire,
+                    Z_STRVAL(value_copy), Z_STRLEN(value_copy)
+            TSRMLS_CC);
+
+            zval_dtor(&value_copy);
+            break;
+        }
+
+        default: {
+            zval value_copy, *value_copy_ptr;
+
+            /* FIXME: we should be using 'Z' instead of this, but unfortunately it's PHP5-only */
+            value_copy = *value;
+            zval_copy_ctor(&value_copy);
+            value_copy_ptr = &value_copy;
+
+            PHP_VAR_SERIALIZE_INIT(value_hash);
+            php_var_serialize(&buf, &value_copy_ptr, &value_hash
+            TSRMLS_CC);
+            PHP_VAR_SERIALIZE_DESTROY(value_hash);
+
+            if (!buf.c) {
+                /* something went really wrong */
+                zval_dtor(&value_copy);
+                php_error_docref(NULL
+                TSRMLS_CC, E_WARNING, "Failed to serialize value");
+                RETURN_FALSE;
+            }
+
+            flags |= BSC_SERIALIZED;
+            zval_dtor(&value_copy);
+
+            result = bsc_pool_producer_put(
+                    pool, command, command_len, key_tmp, key_tmp_len, flags, expire,
+                    buf.c, buf.len
+            TSRMLS_CC);
+        }
+    }
+
+    if (flags & BSC_SERIALIZED) {
+        smart_str_free(&buf);
+    }
+
+    if (result > 0) {
+        RETURN_TRUE;
+    }
+
+    RETURN_FALSE;
 }
 
 /*
